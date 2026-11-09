@@ -1,0 +1,64 @@
+# The video maker on one server: the app, and Caddy in front of it for HTTPS.
+#
+#   cp .env.example .env      then fill in .env
+#   mkdir -p data             jobs, brands and caches are kept here
+#   docker compose up -d --build
+#
+# See docs/DEPLOY.md for the whole setup on an Oracle Cloud Always Free VM.
+
+services:
+  app:
+    build: .
+    image: video-assembly:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      HOST: 0.0.0.0
+      VIDEO_INTERPRETER_BACKEND: api
+    volumes:
+      - ./data:/data
+    # Chrome needs more shared memory than Docker's 64 MB default.
+    shm_size: 1gb
+    # Time for the app to stop the video being made and mark it stopped, so Try again works after a restart.
+    stop_grace_period: 30s
+    # The app needs no special powers: it runs as the "node" user and listens on a high port.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Not published to the internet: only Caddy talks to it.
+    expose:
+      - "8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.11.1-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# The video maker on a home Linux server, open to colleagues through Tailscale Funnel.
+#
+#   ./video-maker install    first time: Docker, the app, the password and Funnel (safe to run again)
+#   ./video-maker link       the web address to send colleagues
+#   ./video-maker status     is it running?
+#   ./video-maker logs       what the app is doing
+#   ./video-maker restart    stop and start the app
+#   ./video-maker stop       stop the app (it stays stopped until start)
+#   ./video-maker start      start it again
+#   ./video-maker update     get the newest version from GitHub, keep videos and settings
+#   ./video-maker password   change the site password
+#   ./video-maker apikey     change the Anthropic API key
+#   ./video-maker backup     copy videos and brands into backups/
+#   ./video-maker doctor     check every tool inside the app
+#   ./video-maker space      how much disk the videos use, and how much is free
+
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+
+REPO=jasontheodorou/video-maker
+RAW="https://raw.githubusercontent.com/$REPO/main"
+IMAGE=${IMAGE:-ghcr.io/$REPO:latest}
+export IMAGE   # docker-compose.yml reads it
+APP_UID=1000   # the "node" user inside the app
+
+say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+ok()   { printf '  OK  %s\n' "$*"; }
+fail() { printf '\n  Problem: %s\n\n' "$*" >&2; exit 1; }
+
+# Docker, with sudo when this user is not yet in the docker group.
+docker_cmd() {
+  if docker info >/dev/null 2>&1; then docker "$@"; else sudo docker "$@"; fi
+}
+compose() { docker_cmd compose "$@"; }
+
+# Values are kept in single quotes, so Docker reads them exactly as typed ($, # and spaces included).
+env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | sed "s/^'//; s/'\$//" || true; }
+env_set() {
+  local key=$1 value=$2
+  touch .env && chmod 600 .env
+  if grep -qE "^$key=" .env; then
+    local tmp; tmp=$(mktemp)
+    grep -vE "^$key=" .env >"$tmp" || true
+    printf "%s='%s'\n" "$key" "$value" >>"$tmp"
+    cat "$tmp" >.env && rm -f "$tmp"
+  else
+    printf "%s='%s'\n" "$key" "$value" >>.env
+  fi
+}
+
+port() { local p; p=$(env_get HOST_PORT); echo "${p:-8080}"; }
+
+need_linux() {
+  [ "$(uname -s)" = Linux ] || fail "This kit is for a Linux machine."
+  case "$(uname -m)" in
+    x86_64|aarch64|arm64) ;;
+    *) fail "This kit needs a 64-bit Intel, AMD or Arm machine. This one is $(uname -m). On a Raspberry Pi, install the 64-bit system." ;;
+  esac
+}
+
+# Warnings only: the app may still work, but the owner should know before colleagues use it.
+check_machine() {
+  say "Checking the machine"
+  local mem_gb disk_gb
+  mem_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024 + 0.5}' /proc/meminfo)
+  if [ "${mem_gb:-0}" -lt 4 ]; then echo "  Warning: this machine has ${mem_gb} GB of memory. The app needs at least 4 GB, and 8 GB is better."; else ok "${mem_gb} GB of memory"; fi
+  disk_gb=$(df -Pk . | awk 'NR==2 {printf "%d", $4/1024/1024}')
+  if [ "${disk_gb:-0}" -lt 20 ]; then echo "  Warning: only ${disk_gb} GB of disk is free here. The app takes about 10 GB, and videos need room too: 20 GB free is a good start."; else ok "${disk_gb} GB of disk free"; fi
+  if [ "$(uname -m)" = x86_64 ]; then
+    if grep -qw avx2 /proc/cpuinfo; then ok "The processor has AVX2 (captions run at full speed)";
+    else echo "  Note: this processor has no AVX2, so captions use a slower build. Videos take longer, but work."; fi
+  fi
+}
+
+need_curl() {
+  command -v curl >/dev/null 2>&1 && return
+  if command -v apt-get >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq curl ca-certificates;
+  else fail "Install curl first, then run this again."; fi
+}
+
+install_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    # Docker from the system's own packages (docker.io) can come without Compose or BuildKit.
+    docker_cmd compose version >/dev/null 2>&1 || fail "Docker is installed but Docker Compose is not. On Ubuntu run: sudo apt-get install docker-compose-v2 docker-buildx   On Debian, use Docker's own packages: https://docs.docker.com/engine/install/debian/"
+    ok "Docker is installed"
+    return
+  fi
+  say "Installing Docker from docker.com (it asks for your password)"
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker "${USER:-$(id -un)}" || true
+  ok "Docker is installed. After you next sign in to this machine, the docker command works without sudo."
+}
+
+start_docker_on_boot() {
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl enable --now docker >/dev/null 2>&1 || true
+    ok "Docker starts when the machine starts"
+  fi
+}
+
+# The published Arm image needs ARMv8.2 with dot product (Raspberry Pi 5, Ampere, Apple silicon). Older boards
+# such as the Raspberry Pi 4 build the app themselves instead.
+needs_source_build() {
+  case "$(uname -m)" in aarch64|arm64) ! grep -qw asimddp /proc/cpuinfo ;; *) return 1 ;; esac
+}
+
+build_from_source() {
+  say "Building the app for this $(uname -m) machine (30 to 60 minutes the first time)"
+  docker_cmd buildx version >/dev/null 2>&1 || fail "Building needs Docker BuildKit (buildx). On Ubuntu run: sudo apt-get install docker-buildx"
+  if [ ! -d source ]; then
+    command -v git >/dev/null 2>&1 || sudo apt-get install -y -qq git
+    git clone --depth 1 "https://github.com/$REPO.git" source
+  elif [ -d source/.git ]; then
+    git -C source pull --ff-only
+  fi
+  # WHISPER_NATIVE=1: captions are built for exactly this processor, since the build runs on it.
+  docker_cmd buildx build --load --build-arg WHISPER_NATIVE=1 -t "$IMAGE" source
+}
+
+load_app() {
+  if [ "$(uname -m)" = x86_64 ] && [ -f image/video-assembly-amd64.tar.gz ]; then
+    # An offline kit made by scripts/make-home-kit.sh.
+    say "Loading the app (a few minutes)"
+    gunzip -c image/video-assembly-amd64.tar.gz | docker_cmd load
+    docker_cmd tag video-assembly:amd64 "$IMAGE"
+  elif needs_source_build; then
+    build_from_source
+  else
+    say "Downloading the app (about 2 GB, a few minutes)"
+    docker_cmd pull "$IMAGE"
+  fi
+  ok "App ready"
+}
+
+# The helper script, Compose file and README come from GitHub too, so an update brings fixes to them as well.
+update_self() {
+  local f changed=0
+  for f in video-maker docker-compose.yml README.md; do
+    curl -fsSL "$RAW/home-server/$f" -o "$f.new" || { rm -f "$f.new"; echo "  Could not download $f. Keeping this copy."; continue; }
+    if ! cmp -s "$f" "$f.new"; then changed=1; fi
+    mv "$f.new" "$f"
+  done
+  chmod +x video-maker
+  [ $changed = 0 ] || ok "Helper script updated"
+}
+
+ask_password() {
+  local pw pw2
+  while true; do
+    read -rsp "  Choose the site password (at least 12 characters, four random words works well): " pw; echo
+    [ ${#pw} -ge 12 ] || { echo "  That is too short. Try again."; continue; }
+    case $pw in *"'"*) echo "  Please leave out the ' character. Try again."; continue ;; esac
+    read -rsp "  Type it again: " pw2; echo
+    [ "$pw" = "$pw2" ] && break
+    echo "  They do not match. Try again."
+  done
+  env_set APP_PASSWORD "$pw"
+}
+
+ask_apikey() {
+  local key
+  echo "  The app uses an Anthropic API key to read briefs. Set a monthly spend limit in the Anthropic Console."
+  read -rsp "  Paste the Anthropic API key (or press Enter to add it later): " key; echo
+  if [ -n "$key" ]; then env_set ANTHROPIC_API_KEY "$key"; else echo "  Skipped. Add it later with: ./video-maker apikey"; fi
+}
+
+setup_settings() {
+  say "Settings"
+  if [ -n "$(env_get APP_PASSWORD)" ]; then ok "Password already set (change it with: ./video-maker password)"; else ask_password; fi
+  if [ -n "$(env_get ANTHROPIC_API_KEY)" ]; then ok "API key already set"; else ask_apikey; fi
+  chmod 600 .env
+}
+
+setup_data() {
+  mkdir -p data backups
+  if [ "$(stat -c %u data)" != "$APP_UID" ]; then
+    sudo chown "$APP_UID:$APP_UID" data
+  fi
+  ok "Videos and brands are kept in $(pwd)/data"
+}
+
+wait_healthy() {
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:$(port)/healthz" >/dev/null 2>&1; then ok "The app is running"; return; fi
+    sleep 2
+  done
+  fail "The app did not start. See what happened with: ./video-maker logs"
+}
+
+start_app() {
+  compose up -d
+  wait_healthy
+}
+
+funnel_url() {
+  sudo tailscale funnel status 2>/dev/null | grep -oE 'https://[^ ]+' | head -1 | sed 's:/*$::' || true
+}
+
+setup_funnel() {
+  say "Tailscale Funnel"
+  if ! command -v tailscale >/dev/null 2>&1; then
+    echo "  Installing Tailscale."
+    curl -fsSL https://tailscale.com/install.sh | sh
+  fi
+  if ! sudo tailscale status >/dev/null 2>&1; then
+    echo "  Sign in to Tailscale: open the link below in any browser."
+    sudo tailscale up
+  fi
+  ok "Signed in to Tailscale"
+  echo "  Turning on Funnel. If Tailscale shows a link to allow Funnel or HTTPS, open it and approve, and this carries on."
+  sudo tailscale funnel --bg "$(port)"
+  ok "Funnel is on, and it stays on after a restart"
+}
+
+show_link() {
+  local url; url=$(funnel_url)
+  if [ -n "$url" ]; then
+    say "Send colleagues this link, and the password separately:"
+    echo "  $url"
+  else
+    echo "  Funnel is not on. Turn it on with: ./video-maker install"
+  fi
+}
+
+cmd_install() {
+  need_linux
+  say "Setting up the video maker"
+  need_curl
+  check_machine
+  install_docker
+  start_docker_on_boot
+  setup_settings
+  setup_data
+  load_app
+  say "Starting the app"
+  start_app
+  setup_funnel
+  show_link
+  say "Done. The app restarts by itself if it stops or the machine restarts."
+}
+
+cmd_update() {
+  need_linux
+  if [ "${VIDEO_MAKER_SELF_UPDATED:-}" != 1 ]; then
+    update_self
+    VIDEO_MAKER_SELF_UPDATED=1 exec ./video-maker update
+  fi
+  load_app
+  say "Restarting with the new version (videos, brands and settings are kept)"
+  compose up -d --force-recreate
+  wait_healthy
+  docker_cmd image prune -f >/dev/null 2>&1 || true
+}
+
+cmd_backup() {
+  local file="backups/video-maker-$(date +%Y-%m-%d-%H%M).tar.gz"
+  say "Backing up videos and brands"
+  sudo tar -czf "$file" --exclude=data/.cache --exclude='data/jobs/*/build' data
+  sudo chown "$(id -u):$(id -g)" "$file"
+  ok "Saved $(pwd)/$file ($(du -h "$file" | cut -f1)). Copy it to another machine to keep it safe."
+}
+
+case "${1:-help}" in
+  install)  cmd_install ;;
+  update)   cmd_update ;;
+  link)     show_link ;;
+  status)   compose ps; curl -fsS "http://127.0.0.1:$(port)/healthz" >/dev/null 2>&1 && ok "The app answers" || echo "  The app is not answering."; show_link ;;
+  logs)     compose logs --tail 200 -f app ;;
+  restart)  compose restart app; wait_healthy ;;
+  stop)     compose stop app; ok "Stopped. Start it again with: ./video-maker start" ;;
+  start)    start_app ;;
+  password) ask_password; compose up -d --force-recreate; wait_healthy; ok "Password changed. Everyone signs in again." ;;
+  apikey)   ask_apikey; compose up -d --force-recreate; wait_healthy ;;
+  backup)   cmd_backup ;;
+  doctor)   compose exec app npm run doctor ;;
+  space)    df -h . ; echo; sudo du -sh data/jobs data/.cache 2>/dev/null || true; docker_cmd system df ;;
+  *)        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

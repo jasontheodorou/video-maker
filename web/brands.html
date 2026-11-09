@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brands - Video maker</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/brands.css">
+<script type="module" src="/static/brands.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="site-header">
+  <div class="inner">
+    <a class="name" href="/">Video maker</a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="/">Make a video</a></li>
+        <li><a href="/brands" aria-current="page">Brands</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+  <div id="page"><p>Loading...</p></div>
+</main>
+
+<dialog id="confirm-dialog" aria-labelledby="confirm-title">
+  <h2 id="confirm-title"></h2>
+  <div id="confirm-body"></div>
+  <div class="button-row">
+    <button type="button" class="button warning" id="confirm-yes"></button>
+    <button type="button" class="button secondary" id="confirm-no">Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="side-dialog" class="wide" aria-labelledby="side-dialog-title">
+  <h2 id="side-dialog-title" class="visually-hidden">Preview and checks</h2>
+  <div class="button-row"><button type="button" class="button secondary" id="side-dialog-close">Close the preview</button></div>
+  <div id="side-dialog-body"></div>
+</dialog>
+
+<dialog id="preview-dialog" class="wide" aria-labelledby="preview-dialog-title">
+  <h2 id="preview-dialog-title"></h2>
+  <div id="preview-dialog-body"></div>
+  <div class="button-row"><button type="button" class="button secondary" id="preview-dialog-close">Close</button></div>
+</dialog>
+</body>
+</html>

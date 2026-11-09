@@ -1,0 +1,55 @@
+{
+  "$comment": "Photos and clips for the fictional Northvale Council demo brand. Every file is CC0 1.0 (public domain dedication), downloaded from Wikimedia Commons on 5 November 2026 and resized or trimmed for the engine. focus is the point to keep in view when cropping, from the top left, 0 to 1.",
+  "files": {
+    "library-reading-room.jpg": {
+      "description": "The reading area of the Portico Library, Manchester: bookshelves, a reading table and armchairs.",
+      "focus": [
+        0.45,
+        0.6
+      ],
+      "licence": "CC0 1.0",
+      "author": "Michael D Beckwith",
+      "source": "https://commons.wikimedia.org/wiki/File:The_Portico_Library_Reading_Area.jpg"
+    },
+    "park-trail.jpg": {
+      "description": "People walking a dog along a path beside the water in a park.",
+      "focus": [
+        0.18,
+        0.6
+      ],
+      "licence": "CC0 1.0",
+      "author": "D Coetzee",
+      "source": "https://commons.wikimedia.org/wiki/File:People_walking_along_bayside_park_trail_(7114453221).jpg"
+    },
+    "recycling-bins.jpg": {
+      "description": "A blue paper bin and a yellow plastics bin on a cobbled street.",
+      "focus": [
+        0.5,
+        0.4
+      ],
+      "licence": "CC0 1.0",
+      "author": "Selixshiraii",
+      "source": "https://commons.wikimedia.org/wiki/File:Recycling_bins_in_Olomouc.png"
+    },
+    "walking-in-park.jpg": {
+      "description": "Two people walking along a park path under bare trees on a sunny day. Portrait photo.",
+      "focus": [
+        0.48,
+        0.55
+      ],
+      "licence": "CC0 1.0",
+      "author": "Janesmith321",
+      "source": "https://commons.wikimedia.org/wiki/File:Walking_in_Park.jpg"
+    },
+    "river-canyon.mp4": {
+      "description": "A slow pan along a shallow river with rocks and trees (Sanghyang Kenit, Indonesia). 12.5 seconds, no sound, 30 frames a second (retimed from 25).",
+      "focus": [
+        0.5,
+        0.6
+      ],
+      "licence": "CC0 1.0",
+      "author": "Ardiishere",
+      "source": "https://commons.wikimedia.org/wiki/File:Batas_Pengunjung_Sanghyang_Kenit.webm"
+    }
+  }
+}

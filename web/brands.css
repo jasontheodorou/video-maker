@@ -1,0 +1,97 @@
+/* Brands page. */
+.brand-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 24px; margin: 0 0 32px; padding: 0; list-style: none; }
+.brand-card { border: 2px solid var(--ink); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.brand-card h3 { margin: 0; }
+.brand-card .logo { height: 72px; display: flex; align-items: center; }
+.brand-card .logo img { max-height: 64px; max-width: 100%; }
+.brand-card .button-row { margin: auto 0 0; }
+
+.editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; }
+/* The live preview sits beside the controls and stays in view from 900 px wide (a 1440 px laptop zoomed to 150%).
+   Narrower than that, it opens in a dialog from the save bar ("Show preview and checks"). */
+@media (min-width: 900px) {
+  .editor { grid-template-columns: minmax(0, 1fr) 380px; gap: 32px; }
+  .editor .side { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 140px); overflow: auto; padding-right: 8px; }
+  .narrow-only { display: none; }
+}
+@media (min-width: 1250px) { .editor { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; } }
+@media (max-width: 899px) { .editor > .side { display: none; } }
+#side-dialog-body .side { display: block; }
+.check-summary { font-weight: 700; font-size: 18px; }
+.editor section { border-top: 4px solid var(--ink); padding-top: 20px; margin-bottom: 40px; }
+.toc { columns: 2 14em; margin: 0 0 24px; padding-left: 24px; }
+.toc li { margin-bottom: 6px; }
+
+/* Keep focused fields clear of the sticky save bar when tabbing (WCAG 2.4.11 and 2.4.12). */
+html { scroll-padding-bottom: 136px; scroll-padding-top: 24px; }
+@media (max-width: 760px) { html { scroll-padding-bottom: 220px; } }
+.save-bar { position: sticky; bottom: 0; z-index: 10; background: var(--paper); border-top: 4px solid var(--ink); padding: 14px 0; display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.save-bar .status { font-weight: 700; font-size: 18px; }
+
+/* Wraps to fit any column width: the role on its own line when space is short, then the controls. */
+.colour-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; padding: 12px 0; border-bottom: 2px solid var(--panel); }
+.colour-row .role { font-weight: 700; font-size: 18px; align-self: center; flex: 1 0 9em; }
+.colour-row > input[type="color"] { flex: 0 0 64px; }
+.colour-row > div { flex: 1 1 9em; min-width: 0; }
+.colour-row label { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.colour-row input[type="text"] { min-width: 0; width: 100%; }
+.fixes { margin-top: 8px; }
+.fix-list { list-style: none; padding: 0; margin: 0; }
+.fix-list li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 10px; }
+[aria-disabled="true"] { cursor: progress; }
+.swatch { display: inline-block; width: 28px; height: 28px; border: 2px solid var(--ink); vertical-align: middle; margin-right: 8px; }
+
+.contrast { list-style: none; padding: 0; margin: 0 0 24px; }
+.contrast li { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-bottom: 2px solid var(--panel); align-items: start; }
+.contrast .sample { display: block; width: 108px; height: 44px; border: 2px solid var(--ink); box-sizing: content-box; font-family: inherit; }
+.contrast .result { font-size: 18px; }
+
+.surface-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14em, 1fr)); gap: 16px; }
+.surface-grid fieldset { border: 2px solid var(--ink); padding: 12px 16px; margin: 0; }
+.surface-grid legend { font-size: 18px; padding: 0 6px; }
+.surface-grid label { font-size: 16px; margin-top: 8px; }
+.surface-grid select { width: 100%; }
+
+.faces td, .faces th { font-size: 18px; }
+.font-results { list-style: none; padding: 0; margin: 12px 0 0; }
+.font-results li { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 2px solid var(--panel); }
+.font-results .fam { font-weight: 700; min-width: 12em; }
+
+.logo-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); gap: 16px; margin-bottom: 20px; }
+.logo-box { border: 2px solid var(--ink); padding: 16px; }
+.logo-box .stage { height: 120px; display: flex; align-items: center; justify-content: center; padding: 12px; margin-bottom: 12px; border: 2px solid var(--ink); }
+.logo-box .stage img { max-height: 88px; max-width: 100%; }
+
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; list-style: none; padding: 0; margin: 0 0 20px; }
+.icon-grid li { border: 2px solid var(--ink); padding: 12px; text-align: center; }
+.icon-grid img { width: 56px; height: 56px; display: block; margin: 0 auto 8px; }
+.icon-grid .name { font-weight: 700; word-break: break-word; }
+
+.previews .scene-row { margin-bottom: 20px; }
+.previews .frames { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.preview-button { padding: 0; border: 2px solid var(--ink); background: var(--panel); cursor: zoom-in; display: block; position: relative; overflow: hidden; }
+.preview-button:focus-visible { outline: 4px solid var(--focus); box-shadow: 0 0 0 8px var(--ink); }
+.preview-button iframe { border: 0; transform-origin: 0 0; pointer-events: none; display: block; }
+.preview-label { font-size: 16px; font-weight: 700; margin-top: 4px; }
+.big-preview { overflow: auto; max-height: 75vh; }
+.big-preview iframe { border: 2px solid var(--ink); transform-origin: 0 0; display: block; }
+
+.issues li { margin-bottom: 10px; }
+.suggestions .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 2px solid var(--panel); }
+.suggestions select { width: auto; min-width: 12em; }
+.quote { white-space: pre-wrap; background: var(--panel); padding: 12px 16px; border-left: 6px solid var(--ink); margin: 8px 0 12px; max-height: 18em; overflow: auto; }
+
+/* Phones: keep the save bar short so it leaves room for the form. Both buttons share one row, and the save
+   status and check result share one line. When the screen is short (a phone on its side, or zoomed in), the
+   bar stops following the page and sits at the end of the form instead. */
+@media (max-width: 760px) {
+  .save-bar { padding: 8px 0; gap: 8px 12px; }
+  .save-bar .button { flex: 1 1 0; min-width: 0; margin: 0; font-size: 18px; min-height: 44px; padding: 8px 10px; }
+  .save-bar .status, .save-bar .check-summary { flex: 0 1 auto; margin: 0; line-height: 1.3; }
+  .save-bar .status:empty { display: none; }
+  html { scroll-padding-bottom: 150px; }
+}
+@media (max-height: 560px) {
+  .save-bar { position: static; }
+  html { scroll-padding-bottom: 24px; }
+}

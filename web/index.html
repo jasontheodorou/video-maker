@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make a video - Video maker</title>
+<link rel="stylesheet" href="/static/app.css">
+<script type="module" src="/static/make.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="site-header">
+  <div class="inner">
+    <a class="name" href="/">Video maker</a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="/" aria-current="page">Make a video</a></li>
+        <li><a href="/brands">Brands</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+  <h1>Make a video</h1>
+  <p class="lede">Describe the video in plain English. The video maker writes the script, records the voice and makes on-brand videos with captions, in the formats you choose.</p>
+
+  <div id="form-errors" hidden></div>
+
+  <form id="make-form" class="narrow" novalidate>
+    <div class="field" id="brief-field">
+      <label for="brief">What is the video about?</label>
+      <p class="hint" id="brief-hint">Say what is happening, who it is for and what they should do. Include dates, times, web addresses and phone numbers exactly as they should appear. Say if you want it short or long, or where it will be shown.</p>
+      <p class="error-text" id="brief-error" hidden></p>
+      <textarea id="brief" name="brief" rows="7" aria-describedby="brief-hint brief-count" spellcheck="true"></textarea>
+      <p class="char-count" id="brief-count">You can enter up to 20,000 characters</p>
+    </div>
+
+    <div class="field" id="brand-field">
+      <label for="brand">Brand</label>
+      <p class="hint" id="brand-hint">The colours, fonts, logo, voice and tone the video uses. <a href="/brands">Add or change brands</a>.</p>
+      <p class="error-text" id="brand-error" hidden></p>
+      <select id="brand" name="brand" aria-describedby="brand-hint brand-status"></select>
+      <p id="brand-status" class="small" aria-live="polite"></p>
+    </div>
+
+    <div class="field">
+      <label for="voice">Voice</label>
+      <p class="hint" id="voice-hint">The brand's voice is used unless you choose another.</p>
+      <select id="voice" name="voice" aria-describedby="voice-hint"></select>
+    </div>
+
+    <fieldset class="field" id="formats-field">
+      <legend>Formats</legend>
+      <p class="hint">All three are made unless you untick some. Each is 1080p.</p>
+      <p class="error-text" id="formats-error" hidden></p>
+      <div class="inline-checks" id="formats"></div>
+    </fieldset>
+
+    <div class="field">
+      <label for="media">Photos or video clips (optional)</label>
+      <p class="hint" id="media-hint">JPEG, PNG or WebP photos, or MP4, MOV or WebM clips. Only use photos you have permission to use. After choosing, say what each one shows so it goes in the right scene.</p>
+      <input type="file" id="media" name="media" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.m4v,.webm,image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" aria-describedby="media-hint">
+      <div id="media-list"></div>
+    </div>
+
+    <div class="button-row">
+      <button type="submit" class="button" id="make-button">Make video</button>
+    </div>
+  </form>
+
+  <section id="job" hidden aria-labelledby="job-title"></section>
+
+  <hr>
+  <section aria-labelledby="history-title">
+    <h2 id="history-title">All your videos</h2>
+    <div id="history"><p>Loading...</p></div>
+  </section>
+</main>
+</body>
+</html>

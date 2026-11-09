@@ -1,0 +1,19 @@
+# Caddy sits in front of the app. It serves HTTPS with free automatic certificates (Let's Encrypt) when
+# SITE_ADDRESS in .env is a domain name, such as videos.example.com. When SITE_ADDRESS is not set, it serves
+# plain HTTP on port 80, so you can use the server's IP address until you have a domain.
+{$SITE_ADDRESS::80} {
+	# Videos and uploads can be large and renders slow, so no body size limit and no response timeout here.
+	reverse_proxy app:8080
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options SAMEORIGIN
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

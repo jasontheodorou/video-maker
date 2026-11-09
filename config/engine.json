@@ -1,0 +1,98 @@
+{
+  "$comment": "Engine settings. Every timing, size target and format lives here. Change values here, never in scene code.",
+  "fps": 60,
+  "draftFps": 30,
+  "timeGrid": 30,
+  "sizes": {
+    "short": { "minSeconds": 15, "maxSeconds": 25, "beats": ["hook", "message", "action"] },
+    "medium": { "minSeconds": 30, "maxSeconds": 50, "beats": ["hook", "problem", "insight", "proof", "action"] },
+    "long": { "minSeconds": 60, "maxSeconds": 90, "beats": ["hook", "problem", "insight", "proof", "insight", "proof", "summary", "action"] }
+  },
+  "sizeRules": [
+    { "id": "many-steps", "when": { "stepsAtLeast": 4 }, "size": "long", "reason": "Four or more steps need a long video to explain them one at a time." },
+    { "id": "many-messages", "when": { "keyMessagesAtLeast": 5 }, "size": "long", "reason": "Five or more key messages need a long video." },
+    { "id": "two-to-four-messages", "when": { "keyMessagesAtLeast": 2 }, "size": "medium", "reason": "Two to four key messages fit a medium video." },
+    { "id": "explain-purpose", "when": { "purposeIn": ["explain", "consult"] }, "size": "medium", "reason": "Explaining or consulting needs room for a problem, an insight and proof." },
+    { "id": "default", "when": {}, "size": "short", "reason": "One key message fits a short video." }
+  ],
+  "channelCaps": {
+    "social": "medium",
+    "screens": "medium"
+  },
+  "voice": {
+    "default": "bf_emma",
+    "british": ["bf_emma", "bf_isabella", "bm_george"],
+    "wordsPerSecond": 2.6,
+    "budgetFactor": 0.9,
+    "phraseGap": 0.3
+  },
+  "timing": {
+    "firstLeadIn": 0.8,
+    "leadIn": 0.7,
+    "hold": 0.8,
+    "endHold": 1.6,
+    "crossfade": 0.5,
+    "wipe": 0.8,
+    "darkLightTransition": "crossfade",
+    "enterDelay": 0.2,
+    "firstEnterDelay": 0.3,
+    "minSceneSeconds": 2.6
+  },
+  "reading": {
+    "minSeconds": 1.8,
+    "wordsPerSecond": 2.5,
+    "extraSeconds": 0.8
+  },
+  "captions": {
+    "maxWords": 6,
+    "maxChars": 40,
+    "maxLines": 2,
+    "minSeconds": 1.0,
+    "closeGap": 0.35,
+    "maxShift": 0.6,
+    "tail": 0.25,
+    "fade": 0.15,
+    "gapForFade": 0.2
+  },
+  "formats": {
+    "16x9": {
+      "label": "Landscape 16:9",
+      "width": 1920,
+      "height": 1080,
+      "typeMultiplier": 1.0,
+      "safe": { "top": 96, "right": 144, "bottom": 72, "left": 144 },
+      "captionBand": 150,
+      "captionGap": 48,
+      "captionMaxWidth": 1300
+    },
+    "9x16": {
+      "label": "Portrait 9:16",
+      "width": 1080,
+      "height": 1920,
+      "typeMultiplier": 1.2,
+      "safe": { "top": 220, "right": 96, "bottom": 300, "left": 96 },
+      "captionBand": 184,
+      "captionGap": 64,
+      "captionMaxWidth": 888
+    },
+    "1x1": {
+      "label": "Square 1:1",
+      "width": 1080,
+      "height": 1080,
+      "typeMultiplier": 1.0,
+      "safe": { "top": 84, "right": 96, "bottom": 64, "left": 96 },
+      "captionBand": 152,
+      "captionGap": 40,
+      "captionMaxWidth": 888
+    }
+  },
+  "minimumTextPx": {
+    "body": 42,
+    "caption": 42
+  },
+  "render": {
+    "finalQuality": "delivery",
+    "draftQuality": "draft",
+    "workers": "auto"
+  }
+}

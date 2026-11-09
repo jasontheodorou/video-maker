@@ -1,0 +1,27 @@
+.DS_Store
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.cache/
+jobs/*/build/
+jobs/*/audio/
+jobs/*/review/
+brands/*/.preview/
+server/test/screenshots/
+
+# Server data folder used by docker-compose.yml
+data/
+
+# Kept off GitHub: videos, demo renders, the project journal, personal notes, Mac-only tooling,
+# generated icon sheets, and every brand except the sample (the others were made during testing).
+jobs/
+demo-output/
+.vellum/
+HANDOVER.md
+skill/
+engine/icons/sheets/
+brands/*
+!brands/demo/
+brands/demo/media/uploads/

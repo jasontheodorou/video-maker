@@ -1,0 +1,27 @@
+# Keep the build small and free of personal data: no jobs, uploads, caches or local settings.
+.git
+.gitignore
+.DS_Store
+**/.DS_Store
+.env
+.env.*
+.vellum
+.cache
+node_modules
+ui/dist
+jobs
+demo-output
+data
+server/test/screenshots
+engine/icons/sheets
+# Only the sample brand goes into the image (it seeds DATA_DIR on first start), without uploads or previews.
+brands/*
+!brands/demo
+brands/demo/.preview
+brands/demo/media/uploads
+docker-compose.yml
+Caddyfile
+# Personal notes and Mac-only tooling stay out of the image.
+HANDOVER.md
+skill
+home-server
