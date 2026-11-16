@@ -25,3 +25,6 @@ engine/icons/sheets/
 brands/*
 !brands/demo/
 brands/demo/media/uploads/
+
+# Which machine packaging/linux/ship.sh updates. Local only.
+packaging/linux/.ship-host

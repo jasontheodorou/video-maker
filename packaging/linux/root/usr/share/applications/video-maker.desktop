@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Video Maker
+GenericName=Video maker
+Comment=Turn a short brief into on-brand videos
+Exec=/opt/video-maker/bin/video-maker-open
+Icon=video-maker
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=video;brief;captions;
+StartupWMClass=video-maker

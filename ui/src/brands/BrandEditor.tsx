@@ -394,7 +394,7 @@ export function BrandEditor({ id, notes, meta, onBack, onLoadError, removeBrand 
     { id: "sec-fonts", title: "Fonts", icon: <TextAa size={24} />, summary: draft.fonts.heading.family === draft.fonts.body.family ? draft.fonts.body.family : `${draft.fonts.heading.family} and ${draft.fonts.body.family}`, body: <FontsSection /> },
     { id: "sec-logo", title: "Logo", icon: <ImageSquare size={24} />, summary: draft.logo.onDark ? String(draft.logo.onDark).replace(/^logo\//, "") : "Not set", body: <LogoSection /> },
     { id: "sec-icons", title: "Icons and graphics", icon: <Shapes size={24} />, summary: `${capitalise(draft.icons?.weight ?? "regular")} weight${ownIcons ? ` · ${plural(ownIcons, "own icon")}` : ""}`, body: <IconsSection /> },
-    { id: "sec-voice", title: "Voice", icon: <Microphone size={24} />, summary: `${voiceLabel} · ${Number(draft.voice?.speed ?? 1).toFixed(2)}×`, body: <VoiceSection /> },
+    { id: "sec-voice", title: "Temporary voice track", icon: <Microphone size={24} />, summary: `${voiceLabel} · ${Number(draft.voice?.speed ?? 1).toFixed(2)}×`, body: <VoiceSection /> },
     { id: "sec-writing", title: "Writing", icon: <PenNib size={24} />, summary: draft.toneOfVoice ? `Tone set${rulesCount ? ` · ${plural(rulesCount, "rule")}` : ""}` : "No tone of voice yet", body: <WritingSection /> },
     { id: "sec-checks", title: "Checks", icon: <ListChecks size={24} />, summary: checkText, body: <Checks /> },
   ];

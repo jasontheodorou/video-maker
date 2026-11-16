@@ -1,0 +1,55 @@
+#!/bin/bash
+# Runs the video maker for systemd (video-maker.service). Runs it in the foreground so systemd restarts it if it
+# ever stops. Everything the app keeps is in /var/lib/video-maker.
+#
+# It always runs the image tagged video-maker:current. Updates without reinstalling (packaging/linux/ship.sh) load
+# a new image, tag it current and stop the app, and systemd starts it again on the new version. Installing a new
+# .deb loads the image inside it and makes that current.
+set -euo pipefail
+
+VERSION=@VERSION@
+BUNDLED="video-maker:$VERSION"
+IMAGE=video-maker:current
+NAME=video-maker-app
+DATA=/var/lib/video-maker
+SHARE=/var/lib/video-maker-share
+PORT=3006
+APP_UID=1000   # the "node" user inside the app
+
+mkdir -p "$DATA" "$SHARE"
+chown "$APP_UID:$APP_UID" "$DATA"
+chmod 755 "$SHARE"
+
+if ! docker image inspect "$BUNDLED" >/dev/null 2>&1; then
+  # A .deb was just installed: its image becomes the current one.
+  echo "Loading the app (first start after installing, about a minute)"
+  gunzip -c /opt/video-maker/image.tar.gz | docker load
+  docker tag "$BUNDLED" "$IMAGE"
+elif ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  docker tag "$BUNDLED" "$IMAGE"
+fi
+# Older versions are no longer needed. Keep the current one and the one inside the .deb.
+docker image ls video-maker --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | awk -v c="$(docker image inspect -f '{{.Id}}' "$IMAGE" | cut -c8-19)" -v b="$BUNDLED" '$1 != "video-maker:current" && $1 != b && $2 != c {print $1}' \
+  | xargs -r docker image rm >/dev/null 2>&1 || true
+
+docker rm -f "$NAME" >/dev/null 2>&1 || true
+
+# Half the memory, at least 4 GB, so a runaway video cannot take the whole machine.
+MEM_GB=$(awk '/MemTotal/ {m=int($2/1024/1024/2); print (m < 4 ? 4 : m)}' /proc/meminfo)
+
+exec docker run --rm --name "$NAME" \
+  -p "127.0.0.1:$PORT:8080" \
+  -v "$DATA:/data" \
+  -v "$SHARE:/share-status:ro" \
+  -e DATA_DIR=/data -e HOST=0.0.0.0 -e PORT=8080 \
+  -e APP_SETUP=1 \
+  -e SHARE_STATUS_FILE=/share-status/status.json \
+  -e VIDEO_INTERPRETER_BACKEND=api \
+  -e COOKIE_SECURE=1 \
+  -e TZ="$(cat /etc/timezone 2>/dev/null || echo Europe/London)" \
+  --shm-size 1g \
+  --memory "${MEM_GB}g" --pids-limit 2048 \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
+  "$IMAGE"

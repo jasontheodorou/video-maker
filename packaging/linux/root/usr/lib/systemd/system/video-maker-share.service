@@ -1,0 +1,13 @@
+[Unit]
+Description=Video Maker team link (Tailscale Funnel)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/video-maker/bin/video-maker-share
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

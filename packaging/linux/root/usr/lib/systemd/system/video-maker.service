@@ -1,0 +1,19 @@
+[Unit]
+Description=Video Maker
+Documentation=file:///opt/video-maker/README.txt
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target video-maker-share.service
+
+[Service]
+Type=simple
+ExecStart=/opt/video-maker/bin/video-maker-run
+ExecStop=/usr/bin/docker stop -t 30 video-maker-app
+Restart=always
+RestartSec=5
+# The first start loads the app image.
+TimeoutStartSec=900
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target

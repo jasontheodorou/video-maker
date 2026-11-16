@@ -25,3 +25,5 @@ Caddyfile
 HANDOVER.md
 skill
 home-server
+# The Linux desktop package is built around the image, not inside it.
+packaging

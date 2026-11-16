@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl stop video-maker.service video-maker-share.service >/dev/null 2>&1 || true
+  if [ "$1" = remove ]; then
+    systemctl disable video-maker.service video-maker-share.service >/dev/null 2>&1 || true
+  fi
+fi
+
+if [ "$1" = remove ] && command -v docker >/dev/null 2>&1; then
+  docker rm -f video-maker-app >/dev/null 2>&1 || true
+  # The app image is about 4 GB. Videos and brands in /var/lib/video-maker are kept.
+  docker image ls video-maker --format '{{.Repository}}:{{.Tag}}' | xargs -r docker image rm >/dev/null 2>&1 || true
+fi
+
+exit 0

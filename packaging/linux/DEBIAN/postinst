@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+  mkdir -p /var/lib/video-maker /var/lib/video-maker-share
+  chown 1000:1000 /var/lib/video-maker
+  chmod 755 /var/lib/video-maker-share
+
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable --now docker.service >/dev/null 2>&1 || true
+    systemctl enable video-maker.service video-maker-share.service >/dev/null 2>&1
+    systemctl restart video-maker-share.service
+    # Loading the app takes about a minute, so the install finishes now and the app carries on starting.
+    systemctl restart --no-block video-maker.service
+  fi
+
+  command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+  command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
+fi
+
+exit 0

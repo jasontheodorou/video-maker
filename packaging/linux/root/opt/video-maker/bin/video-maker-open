@@ -1,0 +1,30 @@
+#!/bin/bash
+# Opens the video maker: what the Video Maker icon runs. Waits for the app if it is still starting
+# (the first start after installing loads the app, which takes about a minute), then opens it in a window.
+URL=http://localhost:3006/
+
+up() { curl -fsS -m 2 http://127.0.0.1:3006/healthz >/dev/null 2>&1; }
+
+if ! up; then
+  if command -v zenity >/dev/null 2>&1; then
+    (
+      for _ in $(seq 1 300); do up && exit 0; sleep 1; done
+    ) | zenity --progress --pulsate --auto-close --no-cancel --title="Video Maker" \
+      --text="Video Maker is getting ready. The first start takes about a minute." 2>/dev/null
+  else
+    command -v notify-send >/dev/null 2>&1 && notify-send "Video Maker" "Getting ready. The first start takes about a minute."
+    for _ in $(seq 1 300); do up && break; sleep 1; done
+  fi
+fi
+
+if ! up; then
+  msg="Video Maker did not start. Restart the computer and try again. If it still does not start, run: systemctl status video-maker"
+  if command -v zenity >/dev/null 2>&1; then zenity --error --title="Video Maker" --text="$msg" 2>/dev/null; else echo "$msg" >&2; fi
+  exit 1
+fi
+
+# A browser that can show the app in its own window, like an app. Otherwise the normal browser.
+for b in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge brave-browser; do
+  if command -v "$b" >/dev/null 2>&1; then exec "$b" --app="$URL" --class=video-maker >/dev/null 2>&1; fi
+done
+exec xdg-open "$URL"

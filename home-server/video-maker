@@ -34,6 +34,12 @@ docker_cmd() {
 }
 compose() { docker_cmd compose "$@"; }
 
+# Tailscale, with sudo only until this user is its operator (set once by setup_funnel).
+ts_operator() { tailscale debug prefs 2>/dev/null | grep -q "\"OperatorUser\": \"$(id -un)\""; }
+ts_cmd() {
+  if ts_operator; then tailscale "$@"; else sudo tailscale "$@"; fi
+}
+
 # Values are kept in single quotes, so Docker reads them exactly as typed ($, # and spaces included).
 env_get() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | sed "s/^'//; s/'\$//" || true; }
 env_set() {
@@ -94,7 +100,7 @@ install_docker() {
 
 start_docker_on_boot() {
   if command -v systemctl >/dev/null 2>&1; then
-    sudo systemctl enable --now docker >/dev/null 2>&1 || true
+    systemctl is-enabled --quiet docker 2>/dev/null || sudo systemctl enable --now docker >/dev/null 2>&1 || true
     ok "Docker starts when the machine starts"
   fi
 }
@@ -195,7 +201,7 @@ start_app() {
 }
 
 funnel_url() {
-  sudo tailscale funnel status 2>/dev/null | grep -oE 'https://[^ ]+' | head -1 | sed 's:/*$::' || true
+  ts_cmd funnel status 2>/dev/null | grep -oE 'https://[^ ]+' | head -1 | sed 's:/*$::' || true
 }
 
 setup_funnel() {
@@ -204,13 +210,15 @@ setup_funnel() {
     echo "  Installing Tailscale."
     curl -fsSL https://tailscale.com/install.sh | sh
   fi
-  if ! sudo tailscale status >/dev/null 2>&1; then
+  if ! ts_cmd status >/dev/null 2>&1; then
     echo "  Sign in to Tailscale: open the link below in any browser."
     sudo tailscale up
   fi
   ok "Signed in to Tailscale"
+  # Lets this user manage Funnel without sudo from now on, so link, status and update never ask for a password.
+  ts_operator || sudo tailscale set --operator="$(id -un)"
   echo "  Turning on Funnel. If Tailscale shows a link to allow Funnel or HTTPS, open it and approve, and this carries on."
-  sudo tailscale funnel --bg "$(port)"
+  ts_cmd funnel --bg "$(port)"
   ok "Funnel is on, and it stays on after a restart"
 }
 

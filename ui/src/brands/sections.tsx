@@ -371,7 +371,7 @@ export function VoiceSection() {
 
   return (
     <>
-      <Field id="voice-id" label="Voice" hint="British voices first. Each video can still pick another.">
+      <Field id="voice-id" label="Temporary voice track" hint="A stand-in voice for checking timing. Replace it with your own commentary before you publish. British voices first, and each video can still pick another.">
         <select
           className="select"
           id="voice-id"

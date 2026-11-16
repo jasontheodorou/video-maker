@@ -1,0 +1,19 @@
+Package: video-maker
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Jason Theodorou <noreply@users.noreply.github.com>
+Depends: docker.io | docker-ce, curl
+Recommends: zenity
+Suggests: tailscale
+Section: video
+Priority: optional
+Installed-Size: @SIZE_KB@
+Homepage: https://github.com/jasontheodorou/video-maker
+Description: Turn a short brief into on-brand videos
+ Type a short brief in plain English and get back finished, on-brand videos
+ with a British voiceover and captions, in landscape, portrait and square.
+ .
+ Runs in the background all the time and starts by itself when the computer
+ starts. Open it from the Video Maker icon. Choose the team password and add
+ the Anthropic API key inside the app, and share it with your team from its
+ Settings page.

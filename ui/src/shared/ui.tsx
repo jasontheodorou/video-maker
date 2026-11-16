@@ -12,6 +12,7 @@ export const ICON = { size: 24, weight: "light" as const };
 const NAV = [
   { key: "make", href: "/", label: "Make a video" },
   { key: "brands", href: "/brands", label: "Brands" },
+  { key: "settings", href: "/settings", label: "Settings" },
 ] as const;
 
 /** The top bar's links. A pill sits behind the current page and glides to whichever link you point at. */

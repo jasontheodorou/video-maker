@@ -446,7 +446,7 @@ export function MakePage() {
   }
 
   const formatSummary = meta ? (formats.length === meta.formats.length ? `All ${meta.formats.length} formats` : formats.length ? plural(formats.length, "format") : "No formats") : "";
-  const optionsSummary = [formatSummary, voiceLabel ?? "Brand voice", files.length ? plural(files.length, "file") : ""].filter(Boolean).join(" · ");
+  const optionsSummary = [formatSummary, voiceLabel ?? "Temporary voice track", files.length ? plural(files.length, "file") : ""].filter(Boolean).join(" · ");
 
   return (
     <Shell current="make">
@@ -555,9 +555,9 @@ export function MakePage() {
             </button>
             <Collapse open={optionsOpen} keepMounted id="make-options" className="bleed">
               <div className="options__body bleed__inner">
-                <Field id="voice" label="Voice">
-                  <select className="select" id="voice" name="voice" value={voice} onChange={(e) => setVoice(e.target.value)}>
-                    <option value="">{`Brand voice${brandVoice ? `: ${brandVoice.label}` : ""}`}</option>
+                <Field id="voice" label="Temporary voice track" hint="A stand-in voice so you can check the timing. Replace it with your own commentary before you publish.">
+                  <select className="select" id="voice" name="voice" value={voice} onChange={(e) => setVoice(e.target.value)} aria-describedby="voice-hint">
+                    <option value="">{`Brand default${brandVoice ? `: ${brandVoice.label}` : ""}`}</option>
                     {meta?.voices.map((v) => (
                       <option key={v.id} value={v.id}>
                         {v.label}

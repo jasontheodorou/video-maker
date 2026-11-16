@@ -589,6 +589,7 @@ function Videos({ view }: { view: JobViewData }) {
       <h3 className="h3" id="videos-title" tabIndex={-1}>
         {outs.length ? "Watch and download" : "Download"}
       </h3>
+      <p className="block-intro">The voice is a temporary voice track. Replace it with your own commentary before you publish.</p>
       {o ? (
         <>
           {outs.length > 1 ? (

@@ -13,7 +13,9 @@ import { JobQueue, jobView, jobDir, STAGES } from "./jobs";
 import * as brands from "./brands";
 import { proposeSurfaces } from "../engine/brand/index";
 import { readGuidelines } from "./guidelines";
-import { handleAuth, AUTH_ENABLED } from "./auth";
+import { SETUP_MODE } from "./settings";
+import { handleAuth, authEnabled } from "./auth";
+import { registerSettingsRoutes } from "./settings-pages";
 
 const PORT = Number(process.env.PORT || 3006);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -54,6 +56,8 @@ route("GET", "/favicon.ico", (_req, res) => {
   res.writeHead(204);
   res.end();
 });
+
+registerSettingsRoutes(route);
 
 // ---------- general ----------
 
@@ -333,7 +337,8 @@ server.listen(PORT, HOST, () => {
   console.log(`Video maker is running at http://localhost:${PORT}`);
   console.log(`Brief interpreter: ${s.backend === "sdk" ? "Anthropic SDK" : "Claude Code CLI"} (${s.model}). One video is made at a time.`);
   if (DATA_DIR !== ROOT) console.log(`Jobs, brands and caches are in ${DATA_DIR}.`);
-  if (AUTH_ENABLED) console.log("Sign-in is on (APP_PASSWORD is set).");
+  if (authEnabled()) console.log("Sign-in is on.");
+  else if (SETUP_MODE) console.log("Waiting for setup: open the app to choose a password.");
 });
 
 // Stop cleanly when the host asks (docker stop or a restart sends SIGTERM): stop taking requests, stop the video being

@@ -1,0 +1,90 @@
+#!/bin/bash
+# Turns the team link (Tailscale Funnel) on and off when someone presses the button on the app's Settings page.
+# Runs as root for systemd (video-maker-share.service), because only root can change Tailscale's settings.
+#
+# The app asks by writing "on" or "off" to /var/lib/video-maker/share/want. This service writes what happened to
+# /var/lib/video-maker-share/status.json, which the app can only read. The app's folder is never trusted: only
+# a regular file named "want" is read, and only its first two characters.
+set -uo pipefail
+
+WANT=/var/lib/video-maker/share/want
+OUT=/var/lib/video-maker-share
+RUN=/run/video-maker
+PORT=3006
+TARGET="http://127.0.0.1:$PORT"
+
+mkdir -p "$OUT" "$RUN"
+chmod 755 "$OUT"
+chmod 700 "$RUN"
+
+# Writes status.json. Every value is a URL or a fixed word, so none can break the JSON.
+status() { # tailscale on url actionUrl message
+  local tmp
+  tmp=$(mktemp "$OUT/.status.XXXXXX")
+  printf '{"tailscale":"%s","on":%s,"url":"%s","actionUrl":"%s","message":"%s","updated":%s000}\n' "$1" "$2" "$3" "$4" "$5" "$(date +%s)" >"$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$OUT/status.json"
+}
+
+wanted() {
+  [ -f "$WANT" ] && [ ! -L "$WANT" ] && [ "$(timeout 2 head -c 2 "$WANT" 2>/dev/null)" = on ]
+}
+
+# The Tailscale sign-in or approval page in a log, and nothing else.
+action_url() { grep -oE 'https://login\.tailscale\.com/[A-Za-z0-9/?=&%._-]+' "$1" 2>/dev/null | tail -1; }
+
+# The public address Funnel gives this app, if Funnel is on for it.
+our_url() {
+  tailscale funnel status 2>/dev/null | awk -v t="$TARGET" '/^https:\/\// {u=$1} index($0, t) {print u; exit}' | grep -oE '^https://[A-Za-z0-9.-]+' || true
+}
+
+login_pid=""
+next_try=0
+
+while true; do
+  if ! command -v tailscale >/dev/null 2>&1; then
+    status missing false "" "" ""
+    sleep 10
+    continue
+  fi
+
+  state=$(tailscale status --json 2>/dev/null | sed -n 's/^\s*"BackendState": *"\([A-Za-z]*\)".*/\1/p' | head -1)
+  url=$(our_url)
+
+  if [ "$state" != Running ]; then
+    if wanted; then
+      # Start one sign-in and show its link until it finishes.
+      if [ -z "$login_pid" ] || ! kill -0 "$login_pid" 2>/dev/null; then
+        : >"$RUN/login.log"
+        timeout 900 tailscale up >"$RUN/login.log" 2>&1 &
+        login_pid=$!
+        sleep 3
+      fi
+      status needs-login false "" "$(action_url "$RUN/login.log")" ""
+    else
+      status needs-login false "" "" ""
+    fi
+  elif wanted; then
+    if [ -n "$url" ]; then
+      status running true "$url" "" ""
+    else
+      now=$(date +%s)
+      if [ "$now" -ge "$next_try" ]; then
+        # The first time, Tailscale may ask the owner to allow Funnel and wait. Give up after 20 seconds and try again
+        # later; the approval link is shown on the Settings page meanwhile.
+        timeout 20 tailscale funnel --bg "$PORT" >"$RUN/funnel.log" 2>&1
+        next_try=$((now + 20))
+        url=$(our_url)
+      fi
+      if [ -n "$url" ]; then status running true "$url" "" ""
+      else status running false "" "$(action_url "$RUN/funnel.log")" ""; fi
+    fi
+  else
+    # Only turn off the link when it points at this app, so other things shared with Tailscale are left alone.
+    if [ -n "$url" ]; then tailscale funnel --https=443 off >/dev/null 2>&1 || true; fi
+    status running false "" "" ""
+  fi
+
+  if [ "$state" = Running ] && [ -n "$login_pid" ]; then kill "$login_pid" 2>/dev/null; login_pid=""; fi
+  sleep 3
+done

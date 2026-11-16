@@ -1,4 +1,4 @@
-// Sign-in for a hosted copy of the app. Off unless APP_PASSWORD is set, so the app on a Mac is unchanged.
+// Sign-in for a hosted copy of the app. Off unless a password is set, so the app on a Mac is unchanged.
 //
 // When APP_PASSWORD is set, every page, API route and file needs either:
 //   - the sign-in cookie, set by the password page at /login (for people in a browser), or
@@ -11,21 +11,24 @@
 //
 // Fail closed: when the app listens on anything other than this machine (HOST is not 127.0.0.1, as in Docker)
 // and APP_PASSWORD is empty, every page is refused. Set ALLOW_NO_PASSWORD=1 to open it on purpose.
+//
+// The desktop app (APP_SETUP=1) starts with no password: every page goes to /setup, where the owner chooses one.
+// The password can also be changed later on /settings (see settings.ts), so it is read on every request.
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { CACHE_DIR } from "../engine/paths";
+import { getPassword, setPassword, setApiKey, SETUP_MODE } from "./settings";
 
-const PASSWORD = process.env.APP_PASSWORD ?? "";
-export const AUTH_ENABLED = PASSWORD.length > 0;
+export const authEnabled = () => getPassword().length > 0;
 
 const LISTEN_HOST = process.env.HOST || "127.0.0.1";
 const LOOPBACK = ["127.0.0.1", "localhost", "::1"].includes(LISTEN_HOST);
 /** Listening beyond this machine with no password, and not opened on purpose: refuse everything. */
-const FAIL_CLOSED = !AUTH_ENABLED && !LOOPBACK && process.env.ALLOW_NO_PASSWORD !== "1";
-if (FAIL_CLOSED) console.error("APP_PASSWORD is not set, so every page is refused. Set APP_PASSWORD (or ALLOW_NO_PASSWORD=1 to open the site to anyone).");
-else if (AUTH_ENABLED && PASSWORD.length < 12) console.warn("APP_PASSWORD is shorter than 12 characters. Use a longer one.");
+const failClosed = () => !authEnabled() && !SETUP_MODE && !LOOPBACK && process.env.ALLOW_NO_PASSWORD !== "1";
+if (failClosed()) console.error("APP_PASSWORD is not set, so every page is refused. Set APP_PASSWORD (or ALLOW_NO_PASSWORD=1 to open the site to anyone).");
+else if (authEnabled() && getPassword().length < 12) console.warn("APP_PASSWORD is shorter than 12 characters. Use a longer one.");
 
 /** A random secret that lasts across restarts, so sign-ins survive a restart. Never logged. */
 function sessionSecret(): string {
@@ -49,7 +52,13 @@ function sessionSecret(): string {
 
 const COOKIE = "va_session";
 const SESSION_DAYS = 14;
-const KEY = AUTH_ENABLED ? crypto.createHash("sha256").update(`video-assembly-session\0${sessionSecret()}\0${PASSWORD}`).digest() : Buffer.alloc(32);
+// The signing key comes from the password, so changing the password signs everyone out.
+let keyFor = { password: "", key: Buffer.alloc(32) };
+function signingKey(): Buffer {
+  const password = getPassword();
+  if (keyFor.password !== password) keyFor = { password, key: crypto.createHash("sha256").update(`video-assembly-session\0${sessionSecret()}\0${password}`).digest() };
+  return keyFor.key;
+}
 /** Mark the cookie Secure even when the proxy does not say the visitor used HTTPS (Tailscale Funnel is HTTPS only). */
 const FORCE_SECURE = process.env.COOKIE_SECURE === "1";
 
@@ -61,7 +70,7 @@ function sameSecret(a: string, b: string): boolean {
 }
 
 function sign(expires: number): string {
-  return crypto.createHmac("sha256", KEY).update(String(expires)).digest("base64url");
+  return crypto.createHmac("sha256", signingKey()).update(String(expires)).digest("base64url");
 }
 
 function cookieValue(): string {
@@ -91,7 +100,7 @@ function basicAuth(req: http.IncomingMessage): "none" | "ok" | "wrong" {
   if (!/^Basic /i.test(h)) return "none";
   const decoded = Buffer.from(h.slice(6).trim(), "base64").toString("utf8");
   const colon = decoded.indexOf(":");
-  return colon >= 0 && sameSecret(decoded.slice(colon + 1), PASSWORD) ? "ok" : "wrong";
+  return colon >= 0 && sameSecret(decoded.slice(colon + 1), getPassword()) ? "ok" : "wrong";
 }
 
 /** HTTPS as the visitor sees it: directly, or through a proxy such as Caddy that sets X-Forwarded-Proto. */
@@ -183,75 +192,179 @@ function safeNext(next: string | null | undefined): string {
   }
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-function loginPage(next: string, error?: string): string {
-  const err = error
-    ? `<div class="error-summary" role="alert" tabindex="-1" id="error-summary">
-        <h2>There is a problem</h2>
-        <p><a href="#password">${escapeHtml(error)}</a></p>
-      </div>`
-    : "";
+/** A plain one-column page in the sign-in style, used by the sign-in, setup and settings pages. */
+export function pageShell(title: string, body: string, focusId?: string): string {
   return `<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${error ? "Error: " : ""}Sign in - Video maker</title>
+<title>${escapeHtml(title)} - Video maker</title>
 <style>
   :root { color-scheme: light; }
   body { margin: 0; background: #ffffff; color: #0b0c0c; font: 19px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
   main { max-width: 640px; margin: 0 auto; padding: 48px 16px; }
   h1 { font-size: 40px; line-height: 1.2; margin: 0 0 24px; }
+  h2 { font-size: 27px; line-height: 1.25; margin: 48px 0 16px; }
+  p { margin: 0 0 16px; }
+  a { color: #1d4f91; }
   label { display: block; font-weight: 700; margin-bottom: 8px; }
+  .field { margin-bottom: 24px; }
   .hint { color: #0b0c0c; margin: 0 0 8px; }
-  input[type=password] { box-sizing: border-box; width: 100%; max-width: 400px; font: inherit; padding: 8px; border: 2px solid #0b0c0c; border-radius: 0; }
-  input[type=password]:focus, button:focus, a:focus { outline: 3px solid #ffdd00; outline-offset: 0; box-shadow: inset 0 0 0 2px #0b0c0c; }
+  input[type=password], input[type=text] { box-sizing: border-box; width: 100%; max-width: 480px; font: inherit; padding: 8px; border: 2px solid #0b0c0c; border-radius: 0; }
+  input:focus, button:focus, a:focus { outline: 3px solid #ffdd00; outline-offset: 0; box-shadow: inset 0 0 0 2px #0b0c0c; }
   .field-error { color: #942514; font-weight: 700; margin: 0 0 8px; }
-  .has-error input[type=password] { border-color: #942514; }
+  .has-error input { border-color: #942514; }
   .has-error { border-left: 5px solid #942514; padding-left: 16px; }
-  button { margin-top: 24px; font: inherit; font-weight: 700; color: #ffffff; background: #005a30; border: 0; box-shadow: 0 2px 0 #002d18; padding: 10px 16px; cursor: pointer; }
+  button { font: inherit; font-weight: 700; color: #ffffff; background: #005a30; border: 0; box-shadow: 0 2px 0 #002d18; padding: 10px 16px; cursor: pointer; }
   button:hover { background: #003d20; }
+  button.secondary { color: #0b0c0c; background: #e5e6e7; box-shadow: 0 2px 0 #6f7072; }
+  button.secondary:hover { background: #cfd0d2; }
   .error-summary { border: 5px solid #942514; padding: 16px; margin-bottom: 32px; }
-  .error-summary:focus { outline: 3px solid #ffdd00; outline-offset: 0; }
+  .error-summary:focus, .notice:focus { outline: 3px solid #ffdd00; outline-offset: 0; }
   .error-summary h2 { margin: 0 0 8px; font-size: 24px; }
   .error-summary a { color: #942514; font-weight: 700; }
+  .notice { border: 5px solid #005a30; padding: 16px; margin-bottom: 32px; }
+  .notice h2 { margin: 0 0 8px; font-size: 24px; }
+  .status { font-weight: 700; }
+  .link-box { font-size: 24px; font-weight: 700; word-break: break-all; padding: 16px; background: #f3f2f1; border-left: 5px solid #1d4f91; margin-bottom: 16px; }
+  .back { display: inline-block; margin-bottom: 32px; }
+  .visually-hidden { position: absolute; left: -9999px; }
 </style>
 </head>
 <body>
 <main>
-  ${err}
-  <h1>Sign in</h1>
-  <form method="post" action="/login" novalidate>
-    <input type="hidden" name="next" value="${escapeHtml(next)}">
-    <div class="${error ? "has-error" : ""}">
-      <label for="password">Password</label>
-      <p class="hint" id="password-hint">Ask the person who runs this site for the password.</p>
-      ${error ? `<p class="field-error" id="password-error"><span style="position:absolute;left:-9999px">Error:</span> ${escapeHtml(error)}</p>` : ""}
-      <input type="password" id="password" name="password" autocomplete="current-password" aria-describedby="password-hint${error ? " password-error" : ""}" ${error ? 'aria-invalid="true"' : ""}>
-    </div>
-    <button type="submit">Sign in</button>
-  </form>
+${body}
 </main>
-${error ? `<script>document.getElementById("error-summary").focus();</script>` : ""}
+${focusId ? `<script>document.getElementById(${JSON.stringify(focusId)}).focus();</script>` : ""}
 </body>
 </html>`;
 }
 
-function sendHtml(res: http.ServerResponse, status: number, html: string) {
+/** The error summary at the top of a form page. Each error links to its field. */
+export function errorSummary(errors: Array<{ field: string; text: string }>): string {
+  if (!errors.length) return "";
+  return `<div class="error-summary" role="alert" tabindex="-1" id="error-summary">
+    <h2>There is a problem</h2>
+    ${errors.map((e) => `<p><a href="#${e.field}">${escapeHtml(e.text)}</a></p>`).join("")}
+  </div>`;
+}
+
+/** One labelled input, with its hint and inline error. */
+export function field(o: { id: string; label: string; hint?: string; type?: string; autocomplete?: string; error?: string }): string {
+  const describedBy = [o.hint ? `${o.id}-hint` : "", o.error ? `${o.id}-error` : ""].filter(Boolean).join(" ");
+  return `<div class="field${o.error ? " has-error" : ""}">
+    <label for="${o.id}">${escapeHtml(o.label)}</label>
+    ${o.hint ? `<p class="hint" id="${o.id}-hint">${escapeHtml(o.hint)}</p>` : ""}
+    ${o.error ? `<p class="field-error" id="${o.id}-error"><span class="visually-hidden">Error:</span> ${escapeHtml(o.error)}</p>` : ""}
+    <input type="${o.type ?? "password"}" id="${o.id}" name="${o.id}" autocomplete="${o.autocomplete ?? "off"}" spellcheck="false"${describedBy ? ` aria-describedby="${describedBy}"` : ""}${o.error ? ' aria-invalid="true"' : ""}>
+  </div>`;
+}
+
+function loginPage(next: string, error?: string): string {
+  const body = `${errorSummary(error ? [{ field: "password", text: error }] : [])}
+  <h1>Sign in</h1>
+  <form method="post" action="/login" novalidate>
+    <input type="hidden" name="next" value="${escapeHtml(next)}">
+    ${field({ id: "password", label: "Password", hint: "Ask the person who runs this site for the password.", autocomplete: "current-password", error })}
+    <button type="submit">Sign in</button>
+  </form>`;
+  return pageShell(`${error ? "Error: " : ""}Sign in`, body, error ? "error-summary" : undefined);
+}
+
+/** Checks a new password and its repeat. Returns the errors to show, or none. */
+export function checkNewPassword(pw: string, pw2: string, fieldId = "password"): Array<{ field: string; text: string }> {
+  if (!pw) return [{ field: fieldId, text: "Enter a password" }];
+  if (pw.length < 12) return [{ field: fieldId, text: "Password must be 12 characters or more" }];
+  if (pw !== pw2) return [{ field: `${fieldId}-again`, text: "Enter the same password twice" }];
+  return [];
+}
+
+function setupPage(errors: Array<{ field: string; text: string }> = []): string {
+  const err = (f: string) => errors.find((e) => e.field === f)?.text;
+  const body = `${errorSummary(errors)}
+  <h1>Set up the video maker</h1>
+  <p>Choose the password your team will use to sign in. You can change everything here later in Settings.</p>
+  <form method="post" action="/setup" novalidate>
+    ${field({ id: "password", label: "Team password", hint: "At least 12 characters. Four random words works well.", autocomplete: "new-password", error: err("password") })}
+    ${field({ id: "password-again", label: "Type the password again", autocomplete: "new-password", error: err("password-again") })}
+    ${field({ id: "api-key", label: "Anthropic API key (optional for now)", hint: "The app uses it to read briefs. It starts with sk-ant-. You can add it later in Settings.", type: "password", error: err("api-key") })}
+    <button type="submit">Save and continue</button>
+  </form>`;
+  return pageShell(`${errors.length ? "Error: " : ""}Set up`, body, errors.length ? "error-summary" : undefined);
+}
+
+/** Signs this browser in and sends it on. */
+export function signIn(req: http.IncomingMessage, res: http.ServerResponse, location: string) {
+  const secure = isHttps(req) ? "; Secure" : "";
+  res.writeHead(303, {
+    Location: location,
+    "Set-Cookie": `${COOKIE}=${encodeURIComponent(cookieValue())}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 3600}${secure}`,
+    "Cache-Control": "no-store",
+  });
+  res.end();
+}
+
+export function sendHtml(res: http.ServerResponse, status: number, html: string) {
   res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Length": Buffer.byteLength(html) });
   res.end(html);
 }
 
-async function readForm(req: http.IncomingMessage): Promise<URLSearchParams> {
+export async function readForm(req: http.IncomingMessage): Promise<URLSearchParams> {
   let body = "";
   for await (const chunk of req) {
     body += chunk;
     if (body.length > 10_000) break;
   }
   return new URLSearchParams(body);
+}
+
+/** Checks a pasted Anthropic API key. Empty is allowed: it can be added later. */
+export function checkApiKey(key: string, fieldId = "api-key"): Array<{ field: string; text: string }> {
+  if (key && !/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(key)) return [{ field: fieldId, text: "Anthropic API key must start with sk-ant- and have no spaces" }];
+  return [];
+}
+
+/** The desktop app before a password is chosen: only the setup page is served. */
+async function handleSetup(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
+  if (crossSite(req)) {
+    const body = JSON.stringify({ error: "That request came from another website, so it was refused." });
+    res.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Length": Buffer.byteLength(body) });
+    res.end(body);
+    return true;
+  }
+  if (url.pathname === "/setup" && req.method === "POST") {
+    const form = await readForm(req);
+    const pw = form.get("password") ?? "";
+    const key = (form.get("api-key") ?? "").trim();
+    const errors = [...checkNewPassword(pw, form.get("password-again") ?? ""), ...checkApiKey(key)];
+    if (errors.length) {
+      sendHtml(res, 400, setupPage(errors));
+      return true;
+    }
+    if (key) setApiKey(key);
+    setPassword(pw);
+    signIn(req, res, "/");
+    return true;
+  }
+  if (url.pathname === "/setup") {
+    sendHtml(res, 200, setupPage());
+    return true;
+  }
+  const wantsPage = (req.method === "GET" || req.method === "HEAD") && /text\/html/.test(String(req.headers.accept ?? ""));
+  if (wantsPage) {
+    res.writeHead(303, { Location: "/setup", "Cache-Control": "no-store" });
+    res.end();
+    return true;
+  }
+  const body = JSON.stringify({ error: "Finish setting up first." });
+  res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Length": Buffer.byteLength(body) });
+  res.end(body);
+  return true;
 }
 
 /**
@@ -265,13 +378,19 @@ export async function handleAuth(req: http.IncomingMessage, res: http.ServerResp
     res.end(JSON.stringify({ ok: true }));
     return true;
   }
-  if (FAIL_CLOSED) {
+  if (SETUP_MODE && !authEnabled()) return handleSetup(req, res, url);
+  if (url.pathname === "/setup") {
+    res.writeHead(303, { Location: "/settings", "Cache-Control": "no-store" });
+    res.end();
+    return true;
+  }
+  if (failClosed()) {
     const body = "The site password (APP_PASSWORD) is not set, so the site is closed. The person who runs it needs to set one.";
     res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Content-Length": Buffer.byteLength(body) });
     res.end(body);
     return true;
   }
-  if (!AUTH_ENABLED) return false;
+  if (!authEnabled()) return false;
 
   if (crossSite(req)) {
     const body = JSON.stringify({ error: "That request came from another website, so it was refused." });
@@ -294,7 +413,7 @@ export async function handleAuth(req: http.IncomingMessage, res: http.ServerResp
         sendHtml(res, 400, loginPage(next, "Enter the password"));
         return true;
       }
-      if (!sameSecret(password, PASSWORD)) {
+      if (!sameSecret(password, getPassword())) {
         noteFailure(ip);
         // A short pause makes guessing slower.
         await new Promise((r) => setTimeout(r, 500));
@@ -302,13 +421,7 @@ export async function handleAuth(req: http.IncomingMessage, res: http.ServerResp
         return true;
       }
       failures.delete(ip);
-      const secure = isHttps(req) ? "; Secure" : "";
-      res.writeHead(303, {
-        Location: next,
-        "Set-Cookie": `${COOKIE}=${encodeURIComponent(cookieValue())}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 3600}${secure}`,
-        "Cache-Control": "no-store",
-      });
-      res.end();
+      signIn(req, res, next);
       return true;
     }
     sendHtml(res, 200, loginPage(safeNext(url.searchParams.get("next"))));
