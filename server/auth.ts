@@ -19,7 +19,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { CACHE_DIR } from "../engine/paths";
-import { getPassword, setPassword, setApiKey, SETUP_MODE } from "./settings";
+import { getPassword, setPassword, setApiKey, setAdminPassword, SETUP_MODE } from "./settings";
 
 export const authEnabled = () => getPassword().length > 0;
 
@@ -31,7 +31,7 @@ if (failClosed()) console.error("APP_PASSWORD is not set, so every page is refus
 else if (authEnabled() && getPassword().length < 12) console.warn("APP_PASSWORD is shorter than 12 characters. Use a longer one.");
 
 /** A random secret that lasts across restarts, so sign-ins survive a restart. Never logged. */
-function sessionSecret(): string {
+export function sessionSecret(): string {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   const file = path.join(CACHE_DIR, "session-secret");
   try {
@@ -63,7 +63,7 @@ function signingKey(): Buffer {
 const FORCE_SECURE = process.env.COOKIE_SECURE === "1";
 
 /** Constant-time comparison of two strings of any length. */
-function sameSecret(a: string, b: string): boolean {
+export function sameSecret(a: string, b: string): boolean {
   const ha = crypto.createHash("sha256").update(a).digest();
   const hb = crypto.createHash("sha256").update(b).digest();
   return crypto.timingSafeEqual(ha, hb);
@@ -86,7 +86,7 @@ function validCookie(value: string | undefined): boolean {
   return sameSecret(sig, sign(expires));
 }
 
-function readCookie(req: http.IncomingMessage, name: string): string | undefined {
+export function readCookie(req: http.IncomingMessage, name: string): string | undefined {
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const i = part.indexOf("=");
     if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
@@ -104,7 +104,7 @@ function basicAuth(req: http.IncomingMessage): "none" | "ok" | "wrong" {
 }
 
 /** HTTPS as the visitor sees it: directly, or through a proxy such as Caddy that sets X-Forwarded-Proto. */
-function isHttps(req: http.IncomingMessage): boolean {
+export function isHttps(req: http.IncomingMessage): boolean {
   const xf = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim();
   return FORCE_SECURE || xf === "https" || (req.socket as { encrypted?: boolean }).encrypted === true;
 }
@@ -139,7 +139,7 @@ function securityHeaders(res: http.ServerResponse) {
 }
 
 /** The visitor's address. Behind a proxy (Caddy, Tailscale Funnel) the last X-Forwarded-For entry is the one it added. */
-function clientIp(req: http.IncomingMessage): string {
+export function clientIp(req: http.IncomingMessage): string {
   const xf = String(req.headers["x-forwarded-for"] ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -158,7 +158,7 @@ const failures = new Map<string, { count: number; first: number }>();
 const GLOBAL_FAIL_LIMIT = 100;
 let globalFailures: number[] = [];
 
-function lockedOut(ip: string): boolean {
+export function lockedOut(ip: string): boolean {
   const now = Date.now();
   globalFailures = globalFailures.filter((t) => now - t < FAIL_WINDOW_MS);
   if (globalFailures.length >= GLOBAL_FAIL_LIMIT) return true;
@@ -171,7 +171,7 @@ function lockedOut(ip: string): boolean {
   return f.count >= FAIL_LIMIT;
 }
 
-function noteFailure(ip: string) {
+export function noteFailure(ip: string) {
   globalFailures.push(Date.now());
   const f = failures.get(ip);
   if (!f || Date.now() - f.first > FAIL_WINDOW_MS) failures.set(ip, { count: 1, first: Date.now() });
@@ -288,10 +288,12 @@ function setupPage(errors: Array<{ field: string; text: string }> = []): string 
   const err = (f: string) => errors.find((e) => e.field === f)?.text;
   const body = `${errorSummary(errors)}
   <h1>Set up the video maker</h1>
-  <p>Choose the password your team will use to sign in. You can change everything here later in Settings.</p>
+  <p>Choose two passwords. The team password lets your team make videos. The admin password protects the Settings page, so only you can change things. You can change both later in Settings.</p>
   <form method="post" action="/setup" novalidate>
     ${field({ id: "password", label: "Team password", hint: "At least 12 characters. Four random words works well.", autocomplete: "new-password", error: err("password") })}
-    ${field({ id: "password-again", label: "Type the password again", autocomplete: "new-password", error: err("password-again") })}
+    ${field({ id: "password-again", label: "Type the team password again", autocomplete: "new-password", error: err("password-again") })}
+    ${field({ id: "admin-password", label: "Admin password", hint: "At least 12 characters, and different from the team password. Keep it to yourself.", autocomplete: "new-password", error: err("admin-password") })}
+    ${field({ id: "admin-password-again", label: "Type the admin password again", autocomplete: "new-password", error: err("admin-password-again") })}
     ${field({ id: "api-key", label: "Anthropic API key (optional for now)", hint: "The app uses it to read briefs. It starts with sk-ant-. You can add it later in Settings.", type: "password", error: err("api-key") })}
     <button type="submit">Save and continue</button>
   </form>`;
@@ -341,12 +343,16 @@ async function handleSetup(req: http.IncomingMessage, res: http.ServerResponse, 
     const form = await readForm(req);
     const pw = form.get("password") ?? "";
     const key = (form.get("api-key") ?? "").trim();
-    const errors = [...checkNewPassword(pw, form.get("password-again") ?? ""), ...checkApiKey(key)];
+    const admin = form.get("admin-password") ?? "";
+    let adminErrors = checkNewPassword(admin, form.get("admin-password-again") ?? "", "admin-password");
+    if (!adminErrors.length && admin === pw) adminErrors = [{ field: "admin-password", text: "Admin password must be different from the team password" }];
+    const errors = [...checkNewPassword(pw, form.get("password-again") ?? ""), ...adminErrors, ...checkApiKey(key)];
     if (errors.length) {
       sendHtml(res, 400, setupPage(errors));
       return true;
     }
     if (key) setApiKey(key);
+    setAdminPassword(admin);
     setPassword(pw);
     signIn(req, res, "/");
     return true;

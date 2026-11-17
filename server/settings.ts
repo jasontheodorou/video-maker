@@ -8,6 +8,7 @@
 // machine (outside the container) reads it, turns Tailscale Funnel on or off, and writes its status to a file the
 // app can only read (SHARE_STATUS_FILE, mounted read-only), so the app can never change what that service writes.
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import { DATA_DIR } from "../engine/paths";
 
@@ -18,7 +19,7 @@ const SHARE_STATUS = process.env.SHARE_STATUS_FILE || path.join(SHARE_DIR, "stat
 /** The desktop app: until a password is chosen, every page shows the setup page instead. */
 export const SETUP_MODE = process.env.APP_SETUP === "1";
 
-type Saved = { password?: string; anthropicApiKey?: string };
+type Saved = { password?: string; anthropicApiKey?: string; adminPasswordHash?: string };
 
 const ENV_PASSWORD = process.env.APP_PASSWORD ?? "";
 const ENV_KEY = process.env.ANTHROPIC_API_KEY ?? "";
@@ -74,6 +75,32 @@ export function apiKeyHint(): string {
 export function setApiKey(key: string) {
   write({ ...saved, anthropicApiKey: key || undefined });
   applyKey();
+}
+
+// ---------- admin password (guards the Settings page) ----------
+// Kept as a salted scrypt hash, never as the password itself.
+
+export function hasAdminPassword(): boolean {
+  return !!saved.adminPasswordHash;
+}
+
+/** Changes whenever the admin password changes, so admin sign-ins end when it does. */
+export function adminPasswordStamp(): string {
+  return saved.adminPasswordHash ?? "";
+}
+
+export function setAdminPassword(password: string) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 32);
+  write({ ...saved, adminPasswordHash: `scrypt$${salt.toString("hex")}$${hash.toString("hex")}` });
+}
+
+export function checkAdminPassword(password: string): boolean {
+  const [kind, salt, hash] = (saved.adminPasswordHash ?? "").split("$");
+  if (kind !== "scrypt" || !salt || !hash) return false;
+  const want = Buffer.from(hash, "hex");
+  const got = crypto.scryptSync(password, Buffer.from(salt, "hex"), want.length);
+  return crypto.timingSafeEqual(got, want);
 }
 
 // ---------- sharing ----------

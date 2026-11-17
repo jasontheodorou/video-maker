@@ -1,24 +1,81 @@
 // The Settings page: the team link (Tailscale Funnel), the Anthropic API key and the team password.
 // Plain server-made HTML in the sign-in page's style, so it works before and without the built pages.
-// Only people who are signed in reach it (handleAuth runs first).
+// Only people who are signed in reach it (handleAuth runs first), and then only with the admin password, which is
+// separate from the team password: the team can make videos, but only the admin can change these settings.
 import http from "node:http";
-import { pageShell, errorSummary, field, sendHtml, readForm, escapeHtml, signIn, checkNewPassword, checkApiKey, authEnabled } from "./auth";
-import { getPassword, setPassword, setApiKey, apiKeyHint, hasApiKey, PASSWORD_FROM_ENV, KEY_FROM_ENV, shareAvailable, shareWanted, setShareWanted, shareStatus } from "./settings";
 import crypto from "node:crypto";
+import { pageShell, errorSummary, field, sendHtml, readForm, escapeHtml, signIn, checkNewPassword, checkApiKey, authEnabled, sessionSecret, sameSecret, readCookie, isHttps, clientIp, lockedOut, noteFailure } from "./auth";
+import { getPassword, setPassword, setApiKey, apiKeyHint, hasApiKey, PASSWORD_FROM_ENV, KEY_FROM_ENV, shareAvailable, shareWanted, setShareWanted, shareStatus, hasAdminPassword, setAdminPassword, checkAdminPassword, adminPasswordStamp } from "./settings";
 
 type Route = (method: string, pattern: string, fn: (req: http.IncomingMessage, res: http.ServerResponse, params: string[], url: URL) => Promise<void> | void) => void;
 type Errors = Array<{ field: string; text: string }>;
 
 const SAVED: Record<string, string> = {
-  password: "Password changed. Everyone else needs to sign in again with the new password.",
+  password: "Team password changed. Everyone needs to sign in again with the new password.",
+  admin: "Admin password changed.",
   key: "API key saved.",
   "key-removed": "API key removed.",
   "share-on": "Making the team link. This takes a few seconds.",
   "share-off": "The team link is off. Only this computer can use the video maker now.",
 };
 
-function sameSecret(a: string, b: string): boolean {
-  return crypto.timingSafeEqual(crypto.createHash("sha256").update(a).digest(), crypto.createHash("sha256").update(b).digest());
+// ---------- the admin sign-in ----------
+// A separate cookie, signed with a key made from the admin password's hash, so changing that password ends every
+// admin sign-in. It lasts 12 hours.
+
+const ADMIN_COOKIE = "va_admin";
+const ADMIN_HOURS = 12;
+
+function adminSign(expires: number): string {
+  const key = crypto.createHash("sha256").update(`video-assembly-admin\0${sessionSecret()}\0${adminPasswordStamp()}`).digest();
+  return crypto.createHmac("sha256", key).update(String(expires)).digest("base64url");
+}
+
+function isAdmin(req: http.IncomingMessage): boolean {
+  if (!hasAdminPassword()) return false;
+  const [exp, sig] = (readCookie(req, ADMIN_COOKIE) ?? "").split(".");
+  const expires = Number(exp);
+  return Number.isFinite(expires) && expires > Date.now() && !!sig && sameSecret(sig, adminSign(expires));
+}
+
+function adminCookie(req: http.IncomingMessage, on: boolean): string {
+  const secure = isHttps(req) ? "; Secure" : "";
+  if (!on) return `${ADMIN_COOKIE}=; Path=/settings; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
+  const expires = Date.now() + ADMIN_HOURS * 3600 * 1000;
+  return `${ADMIN_COOKIE}=${encodeURIComponent(`${expires}.${adminSign(expires)}`)}; Path=/settings; HttpOnly; SameSite=Strict; Max-Age=${ADMIN_HOURS * 3600}${secure}`;
+}
+
+function adminLoginPage(error?: string): string {
+  const body = `<a class="back" href="/">Back to Make a video</a>
+  ${errorSummary(error ? [{ field: "admin-password", text: error }] : [])}
+  <h1>Settings</h1>
+  <p>Settings are for the person who runs the video maker. Enter the admin password to continue.</p>
+  <form method="post" action="/settings/admin-login" novalidate>
+    ${field({ id: "admin-password", label: "Admin password", autocomplete: "current-password", error })}
+    <button type="submit">Continue</button>
+  </form>`;
+  return pageShell(`${error ? "Error: " : ""}Settings`, body, error ? "error-summary" : undefined);
+}
+
+function adminCreatePage(errors: Errors = []): string {
+  const err = (f: string) => errors.find((e) => e.field === f)?.text;
+  const body = `<a class="back" href="/">Back to Make a video</a>
+  ${errorSummary(errors)}
+  <h1>Choose an admin password</h1>
+  <p>Settings need their own password, different from the team password, so only you can change them.</p>
+  <form method="post" action="/settings/admin-create" novalidate>
+    ${field({ id: "admin-password", label: "Admin password", hint: "At least 12 characters. Do not use the team password.", autocomplete: "new-password", error: err("admin-password") })}
+    ${field({ id: "admin-password-again", label: "Type the admin password again", autocomplete: "new-password", error: err("admin-password-again") })}
+    <button type="submit">Save admin password</button>
+  </form>`;
+  return pageShell(`${errors.length ? "Error: " : ""}Choose an admin password`, body, errors.length ? "error-summary" : undefined);
+}
+
+/** Checks a new admin password: long enough, typed twice, and not the team password. */
+export function checkNewAdminPassword(pw: string, pw2: string): Errors {
+  const errors = checkNewPassword(pw, pw2, "admin-password");
+  if (!errors.length && pw === getPassword()) return [{ field: "admin-password", text: "Admin password must be different from the team password" }];
+  return errors;
 }
 
 function shareSection(): { html: string; refresh: boolean } {
@@ -94,16 +151,25 @@ function settingsPage(o: { saved?: string; errors?: Errors } = {}): string {
   ${
     PASSWORD_FROM_ENV
       ? `<p>The password is set where the app is installed, so it cannot be changed here.</p>`
-      : `<p>Changing it signs everyone else out. They sign in again with the new password.</p>
+      : `<p>The password your team uses to sign in. Changing it signs everyone out, and they sign in again with the new one.</p>
   <form method="post" action="/settings/password" novalidate>
-    ${authEnabled() ? field({ id: "current-password", label: "Current password", autocomplete: "current-password", error: err("current-password") }) : ""}
     ${field({ id: "password", label: "New password", hint: "At least 12 characters. Four random words works well.", autocomplete: "new-password", error: err("password") })}
     ${field({ id: "password-again", label: "Type the new password again", autocomplete: "new-password", error: err("password-again") })}
     <button type="submit">Change password</button>
   </form>`
   }
 
-  ${authEnabled() ? `<h2>Sign out</h2><p><a href="/logout">Sign out of the video maker on this browser</a></p>` : ""}
+  <h2 id="admin">Admin password</h2>
+  <p>The password for this Settings page. Keep it to yourself.</p>
+  <form method="post" action="/settings/admin-password" novalidate>
+    ${field({ id: "admin-password", label: "New admin password", hint: "At least 12 characters. Do not use the team password.", autocomplete: "new-password", error: err("admin-password") })}
+    ${field({ id: "admin-password-again", label: "Type the new admin password again", autocomplete: "new-password", error: err("admin-password-again") })}
+    <button type="submit">Change admin password</button>
+  </form>
+
+  <h2>Lock settings</h2>
+  <form method="post" action="/settings/admin-logout" novalidate><button type="submit" class="secondary">Lock settings on this browser</button></form>
+  ${authEnabled() ? `<p><a href="/logout">Sign out of the video maker on this browser</a></p>` : ""}
   ${share.refresh ? `<script>setTimeout(() => location.replace("/settings#share"), 4000);</script>` : ""}`;
   return pageShell(`${errors.length ? "Error: " : ""}Settings`, body, errors.length ? "error-summary" : notice ? "notice" : undefined);
 }
@@ -114,15 +180,71 @@ function redirect(res: http.ServerResponse, to: string) {
 }
 
 export function registerSettingsRoutes(route: Route) {
-  route("GET", "/settings", (_req, res, _p, url) => sendHtml(res, 200, settingsPage({ saved: url.searchParams.get("saved") ?? undefined })));
+  /** Every settings change needs the admin sign-in. Answers and returns false when it is missing. */
+  const admin = (req: http.IncomingMessage, res: http.ServerResponse): boolean => {
+    if (isAdmin(req)) return true;
+    redirect(res, "/settings");
+    return false;
+  };
+
+  route("GET", "/settings", (req, res, _p, url) => {
+    if (!hasAdminPassword()) return sendHtml(res, 200, adminCreatePage());
+    if (!isAdmin(req)) return sendHtml(res, 200, adminLoginPage());
+    sendHtml(res, 200, settingsPage({ saved: url.searchParams.get("saved") ?? undefined }));
+  });
+
+  route("POST", "/settings/admin-login", async (req, res) => {
+    const ip = clientIp(req);
+    if (lockedOut(ip)) return sendHtml(res, 429, adminLoginPage("Too many wrong passwords. Wait 15 minutes, then try again."));
+    const pw = (await readForm(req)).get("admin-password") ?? "";
+    if (!pw) return sendHtml(res, 400, adminLoginPage("Enter the admin password"));
+    if (!checkAdminPassword(pw)) {
+      noteFailure(ip);
+      await new Promise((r) => setTimeout(r, 500));
+      return sendHtml(res, 401, adminLoginPage("The admin password is not right. Check it and try again."));
+    }
+    res.writeHead(303, { Location: "/settings", "Set-Cookie": adminCookie(req, true), "Cache-Control": "no-store" });
+    res.end();
+  });
+
+  // Only when no admin password exists yet (an install from before admin passwords).
+  route("POST", "/settings/admin-create", async (req, res) => {
+    if (hasAdminPassword()) return redirect(res, "/settings");
+    const form = await readForm(req);
+    const pw = form.get("admin-password") ?? "";
+    const errors = checkNewAdminPassword(pw, form.get("admin-password-again") ?? "");
+    if (errors.length) return sendHtml(res, 400, adminCreatePage(errors));
+    setAdminPassword(pw);
+    res.writeHead(303, { Location: "/settings", "Set-Cookie": adminCookie(req, true), "Cache-Control": "no-store" });
+    res.end();
+  });
+
+  route("POST", "/settings/admin-logout", (req, res) => {
+    res.writeHead(303, { Location: "/", "Set-Cookie": adminCookie(req, false), "Cache-Control": "no-store" });
+    res.end();
+  });
+
+  route("POST", "/settings/admin-password", async (req, res) => {
+    if (!admin(req, res)) return;
+    const form = await readForm(req);
+    const pw = form.get("admin-password") ?? "";
+    const errors = checkNewAdminPassword(pw, form.get("admin-password-again") ?? "");
+    if (errors.length) return sendHtml(res, 400, settingsPage({ errors }));
+    setAdminPassword(pw);
+    // The new password makes a new signing key, so sign this browser in again with it.
+    res.writeHead(303, { Location: "/settings?saved=admin#admin", "Set-Cookie": adminCookie(req, true), "Cache-Control": "no-store" });
+    res.end();
+  });
 
   route("POST", "/settings/share", async (req, res) => {
+    if (!admin(req, res)) return;
     const on = (await readForm(req)).get("share") === "on";
     if (shareAvailable()) setShareWanted(on);
     redirect(res, `/settings?saved=${on ? "share-on" : "share-off"}#share`);
   });
 
   route("POST", "/settings/key", async (req, res) => {
+    if (!admin(req, res)) return;
     if (KEY_FROM_ENV) return redirect(res, "/settings#key");
     const key = ((await readForm(req)).get("api-key") ?? "").trim();
     const errors = key ? checkApiKey(key) : [{ field: "api-key", text: "Enter the API key" }];
@@ -132,17 +254,15 @@ export function registerSettingsRoutes(route: Route) {
   });
 
   route("POST", "/settings/password", async (req, res) => {
+    if (!admin(req, res)) return;
     if (PASSWORD_FROM_ENV) return redirect(res, "/settings#password");
     const form = await readForm(req);
-    const errors: Errors = [];
-    if (authEnabled() && !sameSecret(form.get("current-password") ?? "", getPassword())) {
-      await new Promise((r) => setTimeout(r, 500));
-      errors.push({ field: "current-password", text: "The current password is not right" });
-    }
-    errors.push(...checkNewPassword(form.get("password") ?? "", form.get("password-again") ?? ""));
+    const pw = form.get("password") ?? "";
+    const errors = checkNewPassword(pw, form.get("password-again") ?? "");
+    if (!errors.length && hasAdminPassword() && checkAdminPassword(pw)) errors.push({ field: "password", text: "Team password must be different from the admin password" });
     if (errors.length) return sendHtml(res, 400, settingsPage({ errors }));
-    setPassword(form.get("password") ?? "");
-    // The new password makes a new signing key, so sign this browser in again with it.
+    setPassword(pw);
+    // The team sign-in cookie is signed with the team password, so sign this browser in again with the new one.
     signIn(req, res, "/settings?saved=password#password");
   });
 }
