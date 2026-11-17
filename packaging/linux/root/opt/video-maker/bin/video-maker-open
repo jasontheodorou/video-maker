@@ -23,8 +23,17 @@ if ! up; then
   exit 1
 fi
 
-# A browser that can show the app in its own window, like an app. Otherwise the normal browser.
+# A browser that can show the app in its own window, like an app.
 for b in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge brave-browser; do
   if command -v "$b" >/dev/null 2>&1; then exec "$b" --app="$URL" --class=video-maker >/dev/null 2>&1; fi
 done
-exec xdg-open "$URL"
+# Otherwise the default browser. With no default browser set, xdg-open quietly does nothing, so then Firefox
+# (Ubuntu's own browser) is opened directly.
+if [ -n "$(xdg-settings get default-web-browser 2>/dev/null)" ]; then exec xdg-open "$URL"; fi
+for b in firefox /snap/bin/firefox; do
+  if command -v "$b" >/dev/null 2>&1; then exec "$b" --new-window "$URL" >/dev/null 2>&1; fi
+done
+xdg-open "$URL" && exit 0
+msg="Video Maker is running, but no web browser was found to show it. Install Firefox, then open: $URL"
+if command -v zenity >/dev/null 2>&1; then zenity --error --title="Video Maker" --text="$msg" 2>/dev/null; else echo "$msg" >&2; fi
+exit 1
