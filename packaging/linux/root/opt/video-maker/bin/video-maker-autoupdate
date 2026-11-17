@@ -1,0 +1,48 @@
+#!/bin/sh
+# Keeps the desktop app on the newest version GitHub builds, like a host that deploys on every push.
+#
+# Every few minutes it asks GitHub's registry for the newest app image (.github/workflows/image.yml publishes one
+# on every push to main). When there is a new one, it downloads it, waits for any video being made to finish,
+# makes it the current version and stops the app, and systemd starts the app again on it (see video-maker-run).
+#
+# It runs in a small container (video-maker-updater) with Docker's socket, set up by the .deb's postinst.
+# It only acts when GitHub has something new, so a version sent by packaging/linux/ship.sh is not undone.
+REMOTE=${REMOTE_IMAGE:-ghcr.io/jasontheodorou/video-maker:latest}
+STATE=/state/last-image
+EVERY=${CHECK_EVERY:-300}
+APP=video-maker-app
+# A video is queued or being made when its job.json says so (server/jobs.ts).
+BUSY_JS='const fs=require("fs");const d="/data/jobs";let n=0;let js=[];try{js=fs.readdirSync(d)}catch{}for(const j of js){try{const s=JSON.parse(fs.readFileSync(d+"/"+j+"/job.json","utf8")).state;if(s==="queued"||s==="running")n++}catch{}}console.log(n)'
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+busy() {
+  n=$(docker exec "$APP" node -e "$BUSY_JS" 2>/dev/null || echo 0)
+  [ "$n" != 0 ]
+}
+
+mkdir -p /state
+log "Checking $REMOTE every $EVERY seconds"
+while true; do
+  if docker pull -q "$REMOTE" >/dev/null 2>&1; then
+    id=$(docker image inspect -f '{{.Id}}' "$REMOTE")
+    if [ "$id" != "$(cat "$STATE" 2>/dev/null)" ]; then
+      log "New version from GitHub: ${id#sha256:}"
+      waited=0
+      while busy && [ $waited -lt 1800 ]; do
+        [ $waited = 0 ] && log "A video is being made. Waiting for it to finish (up to 30 minutes)."
+        sleep 15
+        waited=$((waited + 15))
+      done
+      docker tag "$REMOTE" video-maker:current
+      echo "$id" >"$STATE"
+      docker stop -t 30 "$APP" >/dev/null 2>&1 || true
+      log "Switched. The app restarts on the new version."
+    fi
+    # Images no longer tagged (older downloads) are removed to save disk.
+    docker image prune -f >/dev/null 2>&1 || true
+  else
+    log "Could not reach GitHub. Trying again later."
+  fi
+  sleep "$EVERY"
+done

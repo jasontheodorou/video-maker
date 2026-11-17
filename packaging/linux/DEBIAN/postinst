@@ -15,6 +15,17 @@ if [ "$1" = configure ]; then
     systemctl restart --no-block video-maker.service
   fi
 
+  # Keeps the app on the newest version GitHub builds (see video-maker-autoupdate). Docker restarts it after reboots.
+  if command -v docker >/dev/null 2>&1; then
+    docker rm -f video-maker-updater >/dev/null 2>&1 || true
+    docker run -d --name video-maker-updater --restart unless-stopped \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v /var/lib/video-maker-updater:/state \
+      -v /opt/video-maker/bin/video-maker-autoupdate:/autoupdate.sh:ro \
+      --log-opt max-size=1m --log-opt max-file=2 \
+      docker:cli sh /autoupdate.sh >/dev/null 2>&1 || true
+  fi
+
   command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
   command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q /usr/share/applications || true
 fi

@@ -9,7 +9,7 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
 fi
 
 if [ "$1" = remove ] && command -v docker >/dev/null 2>&1; then
-  docker rm -f video-maker-app >/dev/null 2>&1 || true
+  docker rm -f video-maker-app video-maker-updater >/dev/null 2>&1 || true
   # The app image is about 4 GB. Videos and brands in /var/lib/video-maker are kept.
   docker image ls video-maker --format '{{.Repository}}:{{.Tag}}' | xargs -r docker image rm >/dev/null 2>&1 || true
 fi
