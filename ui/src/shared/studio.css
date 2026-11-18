@@ -1,0 +1,285 @@
+/*
+ * Daylight Studio: the app shell and its shared parts (spec section 6).
+ * Regions: top bar 56, bin 280, monitor flex, inspector 360, strip 168, status 32.
+ * Text is --ink or --ink-2 only, 16px or more. No opacity on text.
+ */
+
+/* ---------- focus: 3px ink ring with a 2px white inner ring; yellow on the well ---------- */
+:focus-visible,
+.mantine-Button-root:focus-visible,
+.mantine-Modal-close:focus-visible {
+  outline: 3px solid var(--ink) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 2px #fff;
+}
+.well :focus-visible { outline-color: #ffd84d !important; box-shadow: 0 0 0 2px var(--well); }
+html[data-workspace="make"], html[data-workspace="videos"] { background: var(--app); }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px 24px;
+  min-height: 56px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+.wordmark { min-height: 44px; font-size: 18px; font-weight: 700; color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+.wordmark .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mark); margin: 0 0 0 -4px; align-self: center; transform: translateY(6px); }
+.tabs-nav ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.tabs-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 56px;
+  padding: 0 14px;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  border-top: 3px solid transparent;
+}
+.tabs-nav a:hover { background: var(--hover); color: var(--ink); }
+.tabs-nav a[aria-current="page"] { font-weight: 700; border-bottom-color: var(--ink); }
+.topbar__keys {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.topbar__keys:hover { background: var(--hover); }
+
+/* ---------- document frame (pages not yet split into regions) ---------- */
+.doc-shell { min-height: 100svh; background: var(--app); }
+.doc-shell__main { padding-top: 32px; padding-bottom: 64px; }
+.doc-shell .topbar { position: sticky; top: 0; }
+
+/* ---------- the studio frame ---------- */
+.studio {
+  display: flex;
+  flex-direction: column;
+  height: 100svh;
+  background: var(--app);
+}
+.studio__row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  padding: 8px 8px 0;
+}
+.region {
+  position: relative; /* keeps visually-hidden (absolute) text inside the region, so the page itself never scrolls */
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  min-width: 0;
+}
+.region:focus { outline: none; }
+.region:focus-visible { outline: 3px solid var(--ink) !important; outline-offset: -3px !important; box-shadow: none; }
+.region--bin { flex: 0 0 280px; overflow: auto; overscroll-behavior: contain; }
+.region--monitor { flex: 1 1 auto; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+.region--inspector { flex: 0 0 360px; overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; }
+.region--strip { margin: 8px 8px 0; height: 168px; flex: none; overflow: hidden; display: flex; flex-direction: column; }
+.region--status {
+  flex: none;
+  margin: 8px 0 0;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.studio:not([data-status]) .studio__row { padding-bottom: 8px; }
+
+/* Smaller laptops: slimmer side panels so the monitor keeps its controls on one line. */
+@media (min-width: 1024px) and (max-width: 1365px) {
+  .region--bin { flex-basis: 240px; }
+  .region--inspector { flex-basis: 320px; }
+}
+@media (max-width: 1023px), (max-height: 639px) {
+  .studio { height: auto; min-height: 100svh; gap: 8px; padding-bottom: 8px; }
+  .studio__row { display: contents; }
+  .region { margin: 0 8px; }
+  .region--bin, .region--inspector { flex: none; width: auto; overflow: visible; }
+  .region--monitor { overflow: visible; flex: none; }
+  .topbar { order: 0; }
+  .region--monitor { order: 1; }
+  .region--strip { order: 2; margin: 0 8px; }
+  .region--status { order: 3; margin: 0; flex-wrap: wrap; }
+  .region--inspector { order: 4; }
+  .region--bin { order: 5; }
+}
+@media (max-width: 767px) {
+  .topbar { flex-wrap: wrap; padding: 0 16px; }
+  .tabs-nav { order: 3; width: 100%; overflow-x: auto; }
+  .tabs-nav a { min-height: 44px; padding: 0 10px; }
+  .wordmark__text { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+  .studio__row { padding: 8px 8px 0; }
+}
+
+/* ---------- panel parts ---------- */
+.panel-box { display: flex; flex-direction: column; min-height: 100%; }
+.panel-box__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 4px 8px 4px 16px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--rule);
+}
+.panel-box__title { margin: 0; font-size: 18px; line-height: 26px; font-weight: 700; flex: 1; min-width: 0; }
+.panel-box__actions { display: flex; gap: 4px; align-items: center; }
+.panel-box__body { padding: 16px; flex: 1; }
+.panel-box__foot { padding: 12px 16px; border-top: 1px solid var(--rule); }
+
+.toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  min-height: 56px;
+  padding: 6px 16px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--rule);
+}
+.toolbar h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 700; flex: 1 1 120px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ghost-button:hover { background: var(--hover); border-color: var(--edge); }
+.ghost-button[aria-pressed="true"] { background: var(--select); border-color: var(--ink); }
+
+/* ---------- inspector tabs ---------- */
+.itabs { display: flex; flex-direction: column; min-height: 100%; }
+.itabs__list { display: flex; gap: 0; background: var(--panel-2); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 2; }
+.itabs__list [role="tab"] {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.itabs__list [role="tab"]:hover { background: var(--hover); }
+.itabs__list [role="tab"][aria-selected="true"] { border-bottom-color: var(--ink); font-weight: 700; background: var(--panel); }
+.itabs__badge { display: inline-flex; min-width: 24px; justify-content: center; padding: 0 6px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 16px; line-height: 24px; font-variant-numeric: tabular-nums; }
+.itabs__panel { padding: 20px; flex: 1; }
+.itabs__panel:focus-visible { outline-offset: -3px !important; }
+
+/* ---------- groups (disclosure) ---------- */
+.group { border-top: 1px solid var(--rule); }
+.group:first-child { border-top: 0; }
+.itabs__panel > .group:first-child, .itabs__panel > * > .group:first-child { margin-top: -8px; }
+.group__h { margin: 0; font-size: 18px; line-height: 26px; }
+.group__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.group__toggle:hover .group__title { text-decoration: underline; text-underline-offset: 4px; }
+.group__chevron { flex: none; transition: transform 150ms ease-out; }
+.group[data-open] .group__chevron { transform: rotate(90deg); }
+.group__title { flex: 1; }
+.group__meta { font-size: 16px; font-weight: 600; color: var(--ink-2); }
+.group__body { padding: 4px 0 20px; }
+.group__body > * + * { margin-top: 16px; }
+
+/* ---------- shortcuts sheet ---------- */
+.keys-table { width: 100%; border-collapse: collapse; font-size: 18px; }
+.keys-table th, .keys-table td { text-align: left; padding: 8px 8px 8px 0; border-bottom: 1px solid var(--rule); }
+.keys-table th { font-size: 16px; }
+kbd { font-family: inherit; font-size: 16px; font-weight: 700; padding: 2px 8px; border: 1px solid var(--edge); border-radius: 6px; background: var(--panel-2); white-space: nowrap; }
+.keys-off { margin-top: 24px; }
+.mantine-Modal-title { font-size: 22px; font-weight: 700; color: var(--ink); }
+
+/* ---------- common lists in the bin ---------- */
+.bin-list { list-style: none; margin: 0; padding: 0; }
+.bin-row { border-bottom: 1px solid var(--rule); }
+.bin-row a {
+  display: block;
+  padding: 10px 16px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.bin-row a:hover { background: var(--hover); }
+.bin-row a[aria-current="true"] { background: var(--select); box-shadow: inset 4px 0 0 var(--ink); }
+.bin-row__title { display: block; font-size: 17px; font-weight: 600; line-height: 24px; }
+.bin-row__meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 16px; line-height: 24px; color: var(--ink-2); margin-top: 2px; }
+.bin-tools { padding: 12px 16px; display: grid; gap: 12px; border-bottom: 1px solid var(--rule); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-chip:hover { background: var(--hover); }
+.filter-chip[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+.state-word { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--ink); }
+.state-word--bad { color: var(--bad); }
+.state-word--good { color: var(--ok); }

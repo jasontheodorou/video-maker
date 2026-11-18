@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import { z } from "zod";
 import { SCENES } from "./scenes";
-import { BEATS, FactsSchema, SLUG } from "./schema";
+import { BEATS, FactsSchema, SLUG, SchemeId, EntranceName, TransitionName, TextEffectName, ShapeMotionName, MotionStyleName } from "./schema";
 import { FORMAT_IDS } from "./config";
 import { checkIconName } from "./icons/library";
 
@@ -15,6 +15,32 @@ const Phrase = z
   .refine((s) => !/[\r\n]/.test(s), "Use one line per phrase")
   .refine((s) => !/[<>{}]/.test(s), "Do not use < > { } in the voiceover");
 
+/**
+ * Per-scene motion choices, by name only. The engine owns every duration, distance and curve. Left out, the
+ * video's motion style decides.
+ */
+export const SceneMotion = z
+  .object({
+    entrance: EntranceName.optional(),
+    transition: TransitionName.optional(),
+    text: TextEffectName.optional(),
+    shape: ShapeMotionName.optional(),
+  })
+  .strict();
+export type SceneMotion = z.infer<typeof SceneMotion>;
+
+/** The look of the whole video. Left out, the brand decides. */
+export const LookSchema = z
+  .object({
+    /** Spread the brand's schemes across the video, or use one scheme for the whole video. */
+    schemes: z.enum(["spread", "single"]).optional(),
+    /** The one scheme, with schemes "single". */
+    scheme: SchemeId.optional(),
+    motionStyle: MotionStyleName.optional(),
+  })
+  .strict();
+export type Look = z.infer<typeof LookSchema>;
+
 function sceneSchema(def: (typeof SCENES)[number]) {
   return z
     .object({
@@ -23,6 +49,9 @@ function sceneSchema(def: (typeof SCENES)[number]) {
       beat: z.enum(BEATS),
       slots: def.slots,
       voiceover: z.array(Phrase).min(1).max(4),
+      /** A colour scheme of the brand for this scene. Left out, the engine chooses (engine/schemes.ts). */
+      scheme: SchemeId.optional(),
+      motion: SceneMotion.optional(),
     })
     .strict();
 }
@@ -42,6 +71,7 @@ export const SpecSchema = z
     /** Which formats to make. Defaults to all three. */
     formats: z.array(z.enum(FORMAT_IDS)).min(1).optional(),
     facts: FactsSchema,
+    look: LookSchema.optional(),
     scenes: z.array(SceneSchema).min(2).max(16),
   })
   .strict()

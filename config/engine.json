@@ -34,6 +34,7 @@
     "crossfade": 0.5,
     "wipe": 0.8,
     "darkLightTransition": "crossfade",
+    "transitions": { "cut": 0, "crossfade": 0.5, "wipe": 0.8, "push": 0.7, "sweep": 1.0 },
     "enterDelay": 0.2,
     "firstEnterDelay": 0.3,
     "minSceneSeconds": 2.6

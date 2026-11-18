@@ -10,6 +10,7 @@ import path from "node:path";
 import { ICONS_DIR, BRANDS_DIR } from "./paths";
 import type { LoadedBrand } from "./brand";
 import { ICON_WEIGHTS, type IconRef, type IconWeight } from "./schema";
+import { expandPalette, refVar } from "./colour-core";
 import { canonicalIconName, colourIconSvg, checkIconName, brandIconFiles, loadIconIndex } from "./icons/library";
 
 export { searchIcons, checkIconName, suggestIconNames, iconInfo, loadIconIndex, canonicalIconName, brandIconFiles, colourIconSvg } from "./icons/library";
@@ -97,13 +98,16 @@ export function missingIconMessage(ref: IconRef, brand: LoadedBrand): string {
 
 /**
  * An icon as inline SVG coloured from brand tokens, for use outside a scene (previews, icon sheets, the web app).
- * colour is a colour token name such as "primary"; values are written in, so the SVG works on its own.
+ * colour is a palette colour reference such as "navy" (default: the icon colour of the first usable scheme);
+ * values are written in, so the SVG works on its own.
  */
 export function renderIcon(ref: IconRef, brand: LoadedBrand, opts: { colour?: string; size?: number } = {}): string | null {
   const r = resolveIcon(ref, brand);
   if (!r) return null;
-  const colour = brand.colour(opts.colour ?? brand.brand.surfaces.light.accent);
-  const svg = r.svg.replace(/var\(--c-([a-zA-Z0-9]+)\)/g, (_m, name: string) => brand.colour(name));
+  const scheme = brand.usableSchemes()[0] ?? brand.schemes()[0];
+  const colour = opts.colour ? brand.colour(opts.colour) : scheme.vars["--icon"];
+  const values = new Map(expandPalette(brand.brand.palette).map((c) => [refVar(c.ref), c.value]));
+  const svg = r.svg.replace(/var\((--c-[a-z0-9-]+)\)/g, (m, name: string) => values.get(name) ?? m);
   const size = opts.size ? ` width="${opts.size}" height="${opts.size}"` : "";
   return svg.replace(/<svg\b([^>]*?) width="100%" height="100%"/, `<svg$1${size}`).replace(/<svg\b/, `<svg style="color:${colour}"`);
 }

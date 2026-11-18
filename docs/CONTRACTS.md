@@ -96,6 +96,7 @@ The spec is the only thing written per video. It says what to show and say, neve
 | `voice` | no | A Kokoro voice id to override the brand's voice. |
 | `formats` | no | Any of `16x9`, `9x16`, `1x1`. Default: all three. |
 | `language` | no | Only `en-GB` for now. |
+| `look` | no | `{ schemes?: "spread" \| "single", scheme?, motionStyle?: "calm" \| "crisp" \| "lively" \| "still" }`. Left out, the brand decides. The brief interpreter may set only `motionStyle`; the Make page sets the rest. |
 
 Each scene:
 
@@ -106,8 +107,10 @@ Each scene:
 | `beat` | One of `hook`, `problem`, `message`, `insight`, `proof`, `summary`, `action`. |
 | `slots` | The scene's content. Each scene type has its own strict slots. |
 | `voiceover` | 1 to 4 phrases, each up to 220 characters, one line each. Each phrase is spoken as one audio file and captioned word for word. |
+| `scheme` | Optional. A usable colour scheme of the brand for this scene (the title and end card need one the logo shows on). Left out, the engine chooses. Never written by the brief interpreter. |
+| `motion` | Optional. `{ entrance?, transition?, text?, shape? }` by name (section 3, Motion). Refused when the rules forbid it for this scene. Never written by the brief interpreter. |
 
-`emphasis` (in slots that allow it) lists up to 3 exact phrases from the main text to show in the surface's accent colour. Each must appear in the text exactly, or the spec is rejected.
+`emphasis` (in slots that allow it) lists up to 3 exact phrases from the main text to show as key words, in the scheme's key-word colour or in bold. Each must appear in the text exactly, or the spec is rejected.
 
 On-screen text is plain text. HTML, `<`, `>` and line breaks are rejected. Write dates as 3 March, phone numbers in full and web addresses without `https://`. The voice step says them naturally ("the 3rd of March", digit by digit, "dot"); captions show them as written.
 
@@ -216,16 +219,19 @@ What the engine checks and does (compile and lint report these; errors stop the 
 
 ### Transitions
 
-The engine picks the transition for each cut; a spec never chooses (`engine/transitions.ts`). Both use the house curve. A crossfade lasts `timing.crossfade` (0.5 s); a wipe lasts `timing.wipe` (0.8 s), because with an ease-out curve a full-width edge moves too fast in 0.5 s (about 330 px a frame at its fastest; 0.8 s brings that to about 210 px, inside a 576 px soft edge). The next scene starts one transition length before the last one ends, and the reading-time rule counts text as covered from that moment.
+Each cut's transition is decided by `resolveMotion` (`engine/motion-plan.ts`) from the video's motion style, the brand's motion choices and the spec's own `scenes[].motion.transition`, under the rules in `engine/motion-rules.ts`. Lengths come from `timing.transitions` in `config/engine.json`.
 
-| Transition | When | How |
-| --- | --- | --- |
-| `crossfade` | Every cut by default: into or out of a photo or video scene, between scenes on the same kind of surface, and between dark and light text scenes | The next scene fades in over the last one. Opacity only. |
-| `wipe` | Only when `timing.darkLightTransition` is `"wipe"`: between two text scenes of different brightness (dark and light or tint) | The next scene is revealed from left to right behind a wide soft edge (30% of the frame width). Nothing on screen moves: a masked wrapper slides in while the scene inside it slides the same distance back. Transform only. |
+| Transition | Length | Overlap | How | Rules |
+| --- | --- | --- | --- | --- |
+| `cut` | 0 | 0 | None. | Never between two scenes with the same scheme (it reads as a glitch). |
+| `crossfade` | 0.5 s | 0.5 s | The next scene fades in over the last. Opacity only. | Always allowed; the only automatic choice next to photos and video. |
+| `wipe` | 0.8 s | 0.8 s | A masked wrapper slides in while the scene inside it slides back: a soft edge (30% of the width) crosses the frame. Transform only. | Not next to photos or video. |
+| `push` | 0.7 s | 0.7 s | The old scene slides out left as the new one slides in from the right, on an even ease-in-out. Transform only, by whole pixels, with no compositor layer (a layer made settled text shimmer). | Not next to photos or video. |
+| `sweep` | 1.0 s | 0.5 s | A full-frame layer in the next scheme's shape colour (its background when the shape is within 1.3 to 1 of both backgrounds) slides across; the next scene starts under it at the midpoint; the layer slides off. Transform only. | Not next to photos or video; not between equal backgrounds; at most one in any three transitions. |
 
-The default for dark and light cuts is `"crossfade"` (6 November 2026), as the motion rules ask. The wipe is kept as an option: it is smooth, but its visible edge crosses the frame in about 0.28 s (up to 209 px a frame), which reads as fast. The owner to confirm which they prefer.
+Calm (the default style) gives a crossfade everywhere, or the config's `timing.darkLightTransition` between scenes of different tone, exactly as before. The fastest edge (the wipe's first frame) moves 211 px a frame at 60 fps; lint refuses anything over 212 (`MAX_EDGE_PX_PER_FRAME`).
 
-`timeline.json` records each scene's `transitionIn` (`none`, `crossfade` or `wipe`) and `transitionSeconds`.
+`timeline.json` records each scene's `transitionIn` (`none`, `cut`, `crossfade`, `wipe`, `push` or `sweep`), `transitionSeconds` (the overlap with the scene before) and, for a sweep, `transitionColour`. A sweep also covers the end of the scene before for 0.5 s before the next scene starts, so the reading-time rule ends that scene's text there.
 
 ### How to add a scene
 
@@ -261,15 +267,19 @@ Rules for layout CSS (the compiler rejects a scene that breaks them):
 
 ### Motion
 
-Values (`engine/motion.ts`):
+A closed library of named presets. People and the brief interpreter pick names; the engine owns every duration, distance and curve. `engine/motion-rules.ts` holds the registry and the rules (shared with the web app); `engine/motion.ts` the values; `engine/motion-plan.ts` the one resolver (`resolveMotion`) that timing, the compiler, the contact sheet, lint and the checking scripts all use.
 
-- Curve `cubic-bezier(0.2, 0.8, 0.2, 1)`. Stagger 0.06 s.
-- Entrances: `rise` (0.6 s, 18 px), `riseLarge` (0.8 s, 24 px), `riseSmall` (0.4 s, 12 px), `fade` (0.6 s), `fadeLong` (0.8 s). Rises scale with the format's type multiplier, are capped at 24 px and are rounded to whole pixels.
-- Entrances start at opacity 0.002, not 0 (`RASTER_FLOOR_OPACITY`). This is invisible (under half of one 8-bit level), but it makes Chrome draw each text layer once at its whole-pixel start position. At 0, each parallel render worker drew it first at a different mid-movement position, so settled text shimmered by a fraction of a pixel from frame to frame.
-- Transitions: `crossfade` (0.5 s), and `wipe` (0.8 s) only when configured (see Transitions).
-- Photos: held 4% larger than their box and drifted sideways at an even speed over the whole scene, by a quarter of the spare width each way (about 19 px either side of centre on a full 16:9 frame). A pan, not a push-in: a slowly scaling photo is drawn unevenly by Chrome (measured), a pan moves the same amount every frame.
-- Captions: a run of chunks (speech with no clear pause) fades in at its start and out at its end over 0.15 s (opacity only); inside a run, one chunk replaces the next in place with no gap, so a caption never blinks off and on. A thin line in the caption highlight colour shows under the word being spoken, fading in and out over 0.08 s and stepping straight to the next word when speech is continuous. The highlight colour is the first brand colour with 3 to 1 contrast against the caption box (non-text contrast): the dark surface accent, the accent, the light surface accent, the primary, then the caption text colour. Caption text itself never changes colour.
-- Only opacity and transform are animated. Nothing bounces or overshoots.
+- Principles (dec-002, extended in `docs/design/motion-library-decision.md`): 60 fps; transform and opacity only; no bounce or overshoot; house curve `cubic-bezier(0.2, 0.8, 0.2, 1)`, push and sweep `cubic-bezier(0.65, 0, 0.35, 1)`; rises 24 px at most, slides 40 px at most, scale only within 0.94 to 1, all rounded to whole pixels per format; every fade starts at `RASTER_FLOOR_OPACITY`; text never on photos; photos pan, never zoom.
+- Element roles: each scene element is a `logo`, `accent`, `eyebrow`, `headline`, `body`, `item`, `media`, `shape` or `value`. A style moves each role in its own way. Each element also keeps its house (Calm) preset: `rise` (0.6 s, 18 px), `riseLarge` (0.8 s, 24 px), `riseSmall` (0.4 s, 12 px), `fade` (0.6 s), `fadeLong` (0.8 s).
+- Entrances: `rise`, `fade`, `slide` (x −32 px, 0.6 s; headline, body, item, accent, eyebrow), `mask` (Reveal: the block rises into view inside an overflow-hidden wrapper, 0.6 s; headline and body), `settle` (scale 0.96 to 1, 0.7 s; logo, media, shape, value).
+- Text effects (one per scene, on the headline, or the number of a stat): `none`, `words` (word by word: each word fades and rises 8 px, 0.4 s, 0.06 s apart; 12 words at most), `underline` (a bar draws under each highlighted word after the headline settles; needs highlights), `emphasis` (Highlight fade: a text-coloured copy over the key words fades out; only when key words are in a colour), `count` (Count up: digit columns roll to the number over 1.2 s; a stat's single number only, such as 45%, £1,250 or 3.5k).
+- Shape motion (icon circles): `none`, `grow` (scale 0.94 to 1 over 0.8 s), `drift` (±6 px, linear over the scene, no layer).
+- Styles: `calm` (today's motion, exactly), `crisp` (slides and fades, cuts or wipes, underlines, count up, grow; durations × 0.85), `lively` (word-by-word titles and statements, slides, pushes and colour sweeps, count up, grow), `still` (fades only, crossfades).
+- Resolution, per scene: `scenes[].motion` → `look.motionStyle` → the brand's `motion` choices → the brand's style → the scene's defaults. Automatic choices never fail: the resolver makes a refused combination calmer (a sweep next to a photo becomes a crossfade) and notes it. Only a scene's own choice can fail.
+- Rules (lint, `motionCheck`): names exist and suit the scene; text is settled for at least 75% of its time on screen and for its reading time (timing pads the scene first); edges move at most 212 px a frame; word by word on 12 words or fewer, never with Reveal or an incoming push or sweep; push, wipe and sweep never next to photos or video; no cut between matching scenes; count up only on a single number; at most one sweep in three transitions; text effects need a scene of 2.5 s or more; Lively over 60 s is a warning.
+- Compiled arrays (in each page's script): `E` entrances `[sel, x, y, scale, duration, at]`, `M` reveals `[inner, duration, at]`, `X` crossfades, `W` wipes, `P` pushes `[out, in, distance, duration, at]`, `S` sweeps `[layer, duration, at, distance]`, `T` text effects `[sel, kind, duration, at, stagger, distance]`, `K` count up `[column, digit, duration, at]` (the line height is measured in the page, in whole pixels), `G` shapes `[sel, kind, duration, at, distance]`, `D` photo drift, `C` caption fades, `H` spoken-word line. `scripts/motion-schedule.ts` reads them for `motion-check` and `verify`.
+- Photos: held 4% larger than their box and panned sideways at an even speed over the whole scene. Captions: as before (0.15 s fades, a line under the spoken word). The caption line colour is the first that has 3 to 1 on the caption box: each usable scheme's key-word colour in brand order, then each palette colour, then the caption text colour.
+- Previews: `engine/motion-preview.ts` makes a short looping page of any option with the same compiler (see the API in section 8).
 
 After adding a scene: `npm run selftest`, then preview it with `previewBrand(..., { scenes: ["<type>"] })` and check all three formats by eye. Before a release, render the gallery (`npm run make -- jobs/gallery`) and run `npx tsx scripts/motion-check.ts jobs/gallery --lossless`.
 
@@ -351,43 +361,41 @@ brands/demo/
   guidelines/              uploaded guideline documents (PDF, Markdown, text), for people
 ```
 
-`brand.json` fields (see `BrandSchema` in `engine/schema.ts` for exact limits):
+`brand.json` fields (see `BrandSchemaV2` in `engine/schema.ts` for exact limits). Version 1 files (seven colour roles and three surfaces) still load: `engine/brand/migrate.ts` turns them into version 2 in code before validation, and the first save writes version 2. `brands/demo/brand.json` stays version 1 in the repo as the migration fixture.
 
 | Field | Meaning |
 | --- | --- |
-| `schemaVersion` | Always `1`. |
+| `schemaVersion` | `2` (`1` is migrated on load). |
 | `id`, `name` | Folder name and display name. |
 | `fictional` | True for sample brands. |
 | `provisional` | Token groups still to be confirmed, such as `["colours", "logo"]`. Shown as warnings. |
-| `colours` | `primary`, `text`, `background`, `accent`, `tint` required; `accent2`, `line` optional. Each `{ "value": "#RRGGBB", "name": "Vale Blue" }`. |
-| `surfaces` | `dark`, `light`, `tint`, each `{ background, text, accent }` naming colour tokens. Scenes use surfaces, never colours. |
-| `fonts` | `heading` and `body` (`{ family, weight }`) and `faces`: one entry per file `{ family, weight, style, src, unicodeRange? }`. |
-| `typeScale` | `display`, `heading`, `body`, `label`, `caption` in px for 1920 x 1080. Body, label and caption at least 42. |
-| `lineHeight` | `display`, `heading`, `body`. |
-| `letterSpacing` | `display`, `heading` in em (optional). |
-| `spacing.unit` | Base spacing in px (4 to 16). |
-| `radius` | Corner radius in px. |
+| `palette` | `groups` (`{ id, name }`, such as core, accent, secondary, neutral), `colours` (any number: `{ id, name, value, group, tints, tintValues? }`) and optional `rules` (`text`: colours text may use; `never`: pairs to avoid; `source`: the guide's line). With `tints`, a colour has a 10% and a 25% tint (mixed with white, or the guide's exact `tintValues`). |
+| `schemes` | Colour schemes in priority order: `{ id, name, enabled, background, text, highlight, shape, emphasis, fit, logo, source }`. Parts are colour references: a palette id or a tint (`navy`, `golden.t10`). `emphasis`: key words in the highlight colour, in bold, or both. `fit`: anywhere, only to open and close videos, or only in the middle. `logo`: automatic (by tone), or a file. |
+| `schemeUse` | `mode` (`spread`, `single` or `by-type`), `single` and `bookends` (scheme ids). Migrated brands use `by-type`: each scene type keeps its version 1 surface, so videos look as before. |
+| `motion` | `style` (`calm`, `crisp`, `lively`, `still`) and optional brand-wide `entrance`, `transition`, `textEffect`, `shape`. |
+| `examples` | Up to 3 example briefs for the Make page. |
+| `fonts` | `heading` (`{ family, weight, emphasisWeight? }`), `body` (`{ family, weight }`) and `faces`: one entry per file `{ family, weight, style, src, unicodeRange? }`. `emphasisWeight` is the weight of bold key words (default 700). |
+| `typeScale`, `lineHeight`, `letterSpacing`, `spacing.unit`, `radius` | As before. |
 | `logo` | `onLight`, `onDark` (file paths), `alt`, `minHeight` (px at 1080p). |
-| `icons` | `weight` (default icon weight, default `regular`), `dir` (default `icons`), `duotoneOpacity` (0.1 to 0.6, default 0.2), `duotoneColour` (optional colour token for the light layer of duotone icons). |
+| `icons` | `weight`, `dir`, `duotoneOpacity`, `duotoneColour` (optional colour reference). |
 | `graphics` | `dir` (default `graphics`). |
-| `captions` | `background`, `text` (colour token names), `weight`. |
-| `voice` | `id` (Kokoro voice), `speed` (0.8 to 1.2), `lang` (optional, such as `en-gb`). |
-| `toneOfVoice` | Free text the brief interpreter reads. |
-| `guidelines` | Free text (Markdown) the brief interpreter reads. |
-| `guidelinesFile` | Optional longer guidelines file in the folder, for people. |
-| `rules` | `{ "do": [...], "dont": [...] }`, read by the brief interpreter. |
+| `captions` | `background`, `text` (colour references), `weight`. |
+| `voice`, `toneOfVoice`, `guidelines`, `guidelinesFile`, `rules` | As before. |
 
-Checks (from `loadBrand`, `validateBrand` and `npm run doctor`). Errors stop rendering; warnings do not:
+Scenes see only scheme variables: each `.scene-inner` carries `scheme-<id>`, which sets `--bg --fg --hl --shape --icon --hl-weight --underline` (made by `colour-core.schemeVars`, the same function the web app's live previews use). Palette colours are also `--c-<id>`, `--c-<id>-t10`, `--c-<id>-t25`. Scene CSS may not use hex colours or the old `--dark-*`, `--light-*`, `--tint-*` variables (`checkSceneCss`).
 
-- AAA contrast (7 to 1) for every pairing the engine can draw: each surface's text and accent on its background, and caption text on the caption box. Failing messages name the colours, the ratio and a suggested passing colour.
-- A pair that passes but under `AAA_SAFE` (7.5 to 1) is a warning: players show video colours slightly differently (Chrome on a Mac showed the demo blue lighter, taking yellow on blue from 8.39 to 7.73 to 1).
-- Videos show the dark-background logo (Title, End card). When `logo.onDark` is still the placeholder wordmark but `logo.onLight` is a real logo, a warning says the uploaded logo does not appear in videos.
-- The dark-background logo must be seen on the dark surface: drawn with resvg, at least 30% of its pixels need 3 to 1 non-text contrast with the background, or it is an error that points to a white or reversed logo; under 60% is a warning. The light-background logo gets warnings only (it is not used in videos yet).
-- Highlighted words must stand out from the text around them: a surface's accent and text colours must differ by at least 20 in CIE Lab (`colourDifference`, `MIN_HIGHLIGHT_DIFFERENCE` in `contrast.ts`). Closer is a warning. `proposeSurfaces` only picks highlight colours that pass both rules, and says so when no brand colour can.
-- Every colour a surface, the captions or `icons.duotoneColour` names exists.
-- Font files exist and are font files; the heading weight, body weight and caption weight each have a file.
-- Logo files exist and are SVG or PNG (PNG gives a warning).
-- Body and caption sizes stay at or above 42 px in every format, and two caption lines fit the caption band.
+Which scheme each scene gets (`engine/schemes.ts`, `assignSchemes`, written to `timeline.json` as `scheme` and `schemeAuto`): a scene's own `scheme` in the spec wins; `single` uses one scheme throughout (title and end card use one the logo shows on); `spread` puts the title and end card on the bookend scheme (the brand's choice, else the first strong one) and gives the scenes between the other schemes in turn, least used first, never the same as the scene before where that can be helped (stat and quote prefer pale schemes).
+
+Checks (from `loadBrand`, `validateBrand` and `npm run doctor`). Per enabled scheme, a problem that makes text or icons hard to see makes that scheme unusable: it is an error with `blocking: false`, the scheme is saved but left out of videos ("not used until fixed"), and the brand still renders with its other schemes:
+
+- Text on background at least 7 to 1 (AAA); key words too when they are coloured. Under 7.5 is a warning ("Close to the limit").
+- Bold key words need a heading font file at `emphasisWeight`.
+- Icons need 3 to 1 on the shape (WCAG 1.4.11).
+- Warnings: coloured key words within ΔE 20 of the text; a shape within ΔE 5 of the background ("The shape barely shows"); bold key words no heavier than the headings; text outside the guide's text colours; a `never` pair; a logo that does not show (that scheme can't open or close videos).
+
+Brand-level errors (block rendering): no usable scheme; no usable scheme that can open and close a video; caption text below AAA; missing font or logo files; sizes under the minimums. `contrastFixes` (`engine/brand/fixes.ts`) offers up to three fixes per problem, keyed `schemes.<id>.<part>` and `captions`: use another palette colour, make key words bold, or a darker or lighter version (a new palette colour for that one part, or the colour changed in place when nothing else uses it). A fix never breaks another scheme.
+
+Suggested schemes (`engine/brand/recommend.ts`, `recommendSchemes`): from the palette and the guide's colour rules, a ranked, varied set where every scheme passes. For HMCTS's palette the first four are Golden 10%, HMCTS blue 25% and Grey 10% (navy text, bold navy key words, a deeper circle) and Navy (white text, golden key words, a blue circle): `npx tsx scripts/recommend-check.ts`.
 
 Voices available (Kokoro): `bf_emma`, `bf_isabella`, `bm_george` (British), and `af_heart`, `af_nova`, `af_sky`, `am_adam`, `am_michael` (American). See `KOKORO_VOICES`.
 
@@ -589,6 +597,24 @@ const r = await interpretBrief({ brief, brand: "demo", voice?, formats?, media?,
 ### Web app (server/, ui/)
 
 `npm run app` builds the pages and starts the server at http://localhost:3006 (port from `PORT`). The pages are React with Mantine 9.6.3 in `ui/`, built by Vite into `ui/dist` (`npm run app:build`; `npm run app:serve` starts the server without building; `npm run app:dev` gives live reload on port 5173 with the API passed to port 3006; `npm run app:typecheck` checks them). The server serves `ui/dist/index.html` at `/`, `ui/dist/brands.html` at `/brands` and the hashed files at `/assets/`. The first version of the pages (plain HTML in `web/`) stays at `/classic` and `/classic/brands` until it is retired. The look follows katsura's rules (one 12-column grid, warm paper and sand tints, hairlines, gaps in multiples of 8, Open Sans stored locally, Phosphor light icons) with WCAG AAA throughout: all text 7:1 or more, nothing under 16 px, body text 19 px. It runs one job at a time in a queue. Stop asks the person to confirm, then shows "Stopping" at once (`job.json` has `stopping: true`, and progress from the steps still finishing cannot overwrite that message); the job reaches `stopped` at the next safe point, within a few seconds. A waiting job's `queuePosition` counts the running job too, so the page says "Waiting for 1 other video to finish". A running step whose progress has not changed for 60 s shows "This step is taking longer than usual" on the page. An `InterpretError` with `retryable: false` (nonsense, too short or too long brief) is stored as `error.retryable: false`, and the page offers Change the brief but not Try again. Saving an edited script runs the text-fit check first and returns `{ problems, fields: [{ scene, slot, item?, message }] }` with status 400 when text does not fit. Try again also works for jobs made from the command line that have a spec. Result videos show the first contact-sheet still as a poster. Its JSON API is in `server/index.ts`; the brand routes call the brand module (`engine/brand/`). Brand checks from the server (`/check`, the brand detail and save) carry `fixes` from `contrastFixes`. Keyboard focus is never dropped to the page: the job heading is updated in place, Stop and Save use `aria-disabled` while busy, uploads move focus to their report, and a stopped job moves focus to Try again. Every page is one column, GOV.UK style: each element follows the one before at every width. The brand editor has a contents list of jump links, a Saving panel at the top (status, check result, Save brand), its sections in order with the live preview as its own section after Colours and the checks near the end, and a Save brand button at the end of every section, with no sticky bar. Questions (Stop, delete a brand or a file, make a white logo, leave without saving) are asked in the page, not in dialogs. Videos carry a captions track made from the subtitle file (`/job-files/<id>/out/<name>.vtt`). `npm run e2e` drives the real pages with Playwright (see `server/test/e2e.ts`).
+
+API added for the studio (JSON; errors are `{ error, ...extra }`; nothing saves unless it says so). Scene numbers in bodies and results are 0-based indexes, as in `plan.scenes[].index`.
+
+- `GET /api/meta` adds `lengths` (`auto`, `short`, `medium`, `long` with `min` and `max` seconds), `motion` (`styles`, `entrances`, `transitions`, `textEffects`, `shapes`) and, per scene type, `legacyScheme`, `schemeNeed`, `hasShape`.
+- `POST /api/jobs` (multipart) also takes `size` (`auto|short|medium|long`) and `look` (JSON: `{ "schemes": "spread"|"single", "scheme"?, "motionStyle"? }`).
+- `GET /api/jobs/:id` adds `look` and `plan` (`null` until `timeline.json` exists): `plan.scenes[]` `{ index, id, type, label, beat, start, duration, scheme, schemeAuto, transitionIn, transitionSeconds, motion: { style, entrance, text, shape }, stills: { "16x9": url|null, ... }, problems }` and `plan.schemes[]` `{ id, name, usable, bookends, tone, vars }`. `job.mode` is `full`, `rerender` or `relook`.
+- `PUT /api/jobs/:id/spec` `{ spec }`: when only `scenes[].scheme`, `scenes[].motion`, `look` or `title` changed, the video is remade from the timing step with its voice and captions kept (`mode: "relook"`); otherwise as before (`rerender`). The response adds `remake: "look" | "words"`. Scheme and motion problems come back as 400 with `fields[].slot` `scheme` or `motion.<part>`.
+- `POST /api/jobs/:id/scene-preview` `{ scene, scheme?, format?, spec? }` → `{ url, width, height, scheme, issues }`: one still of that scene in that scheme.
+- `POST /api/jobs/:id/look-check` `{ spec }` → `{ problems: [{ scene, field, message }] }`.
+- `GET /api/brands` adds `schemes` (usable count); `primary` is the first core colour.
+- `GET /api/brands/:id` returns `raw` as version 2 (migrated), `migrated`, `palette` (each colour with its resolved `tints: { t10, t25 }` or `null`) and `check.schemes` (`{ id, name, enabled, usable, bookends, tone, strong, pale, logo, logoShare, fit, vars, problems }`), `check.fixes` keyed `schemes.<id>.<part>`.
+- `PUT /api/brands/:id` `{ brand }` takes version 1 or 2 and always writes version 2.
+- `POST /api/brands/:id/schemes/recommend` `{ brand?, useRules?, limit?, includeExisting? }` → `{ schemes: [{ id, name, background, text, highlight, shape, emphasis, fit, logo, source, score, reasons, contrast: { text, highlight, icon }, kind, adds }], nearMisses, rules, notes }`. Suggestions equal to existing schemes are left out unless `includeExisting`.
+- `POST /api/brands/:id/schemes/preview` `{ brand?, scheme: id | {Scheme}, scene?, format? }` → `{ url, width, height, scheme, vars, logo, issues }`. The still has the scheme's variables on `:root` (no scheme class), so the app can set `--bg --fg --hl --shape --icon --hl-weight --underline` on the iframe's document element on every colour input. The page carries `data-logo`; when a change flips the scheme's tone, fetch again.
+- `POST /api/brands/:id/motion/preview` `{ brand?, kind: "style"|"entrance"|"transition"|"text"|"shape", id, scheme?, format? }` → `{ url, seconds }`. The page shows its settled last frame, plays on `postMessage({ play: true })` (loops; `{ play: true, once: true }` plays once) and stops on `{ pause: true }`; `?autoplay=1` plays on load unless the viewer prefers reduced motion.
+- `POST /api/brands/:id/preview` also takes `scenes`, `formats` and `scheme`.
+- `POST /api/brands/:id/guidelines`: each suggested colour adds `group`, `tintOf` and `tintStep`; `suggestions.colourRules` gives `{ text, never, source }` by colour name.
+- Pages: `/make`, `/make/*`, `/v/*`, `/videos`, `/videos/*` and `/brands/*` serve the single-page app (`ui/dist/index.html`, no-cache) to requests that accept HTML.
 
 ## 9. Quality rules the engine enforces
 

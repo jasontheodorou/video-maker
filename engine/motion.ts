@@ -55,15 +55,22 @@ export type EntranceName = keyof typeof ENTRANCES;
 export const ENTRANCE_NAMES = Object.keys(ENTRANCES) as EntranceName[];
 
 /**
- * Transitions between scenes. Both use the house curve. A crossfade lasts config timing.crossfade (0.5 s),
- * a wipe timing.wipe (0.8 s), so its edge never moves faster than about 210 px a frame.
+ * Transitions between scenes (into a scene). All use the house curve except push and sweep, which use an even
+ * ease-in-out so the frame moves as one. A spec never writes timings: it may name a transition, and the engine
+ * owns its length (config timing.transitions).
+ * - cut: no transition. Never between two scenes with the same scheme (it reads as a glitch).
  * - crossfade: the next scene fades in over the last one (opacity only).
  * - wipe: the next scene is revealed from left to right behind a wide, soft edge. Nothing on screen moves:
  *   a masked wrapper slides in while the scene inside it slides the same distance the other way (transform only).
- * The engine picks one per cut (engine/transitions.ts). A spec never chooses.
+ * - push: the old scene slides out to the left as the new one slides in from the right (transform only).
+ * - sweep: a full-frame layer in the next scheme's colour sweeps across, the next scene starts under it at the
+ *   midpoint, and the layer carries on off the frame (transform only).
  */
-export const TRANSITIONS = ["crossfade", "wipe"] as const;
-export type TransitionName = (typeof TRANSITIONS)[number];
+export { TRANSITION_IDS as TRANSITIONS } from "./motion-rules";
+export type { TransitionId as TransitionName } from "./motion-rules";
+
+/** Curve for push and sweep: an even ease-in-out, so the whole frame moves together. */
+export const SLIDE_CURVE = [0.65, 0, 0.35, 1] as const;
 
 /** The soft edge of a wipe, as a share of the frame width. */
 export const WIPE_FEATHER = 0.3;
@@ -124,3 +131,31 @@ export const BEZIER_SOURCE = `function __bezier(x1,y1,x2,y2){var cx=3*x1,bx=3*(x
 export function entranceEnd(name: EntranceName): number {
   return ENTRANCES[name].duration;
 }
+
+// ---------- the motion library (styles and presets beyond Calm) ----------
+
+/** Slide distance in px at 1080p (from the reading start side). Never more than 40. */
+export const SLIDE = 32;
+export const MAX_SLIDE = 40;
+/** Settle starts at this scale. Scale stays within 0.94 to 1. */
+export const SETTLE_SCALE = 0.96;
+export const MIN_SCALE = 0.94;
+export const NEW_ENTRANCE_SECONDS = { slide: 0.6, mask: 0.6, settle: 0.7, fade: DURATION.medium, fadeLong: DURATION.long } as const;
+/** Mask: the outer block fades from the floor to full over this time while the inner block rises into view. */
+export const MASK_FADE = 0.1;
+
+/** Word by word: each word fades and rises this far (px at 1080p), over this time, this far apart. */
+export const WORDS = { rise: 8, duration: 0.4, stagger: 0.06 } as const;
+/** Underline: drawn over this time, starting this long after the headline settles. */
+export const UNDERLINE = { duration: 0.5, delay: 0.15, gap: 0.12 } as const;
+/** Highlight fade: the text-coloured copy over the key words fades out over this time after the headline settles. */
+export const EMPHASIS_FADE = { duration: 0.5, delay: 0.15 } as const;
+/** Count up: the digits roll to the number over this time. */
+export const COUNT_SECONDS = 1.2;
+/** Grow: circles scale from this size over this time. Drift: circles move this far (px at 1080p) each way. */
+export const GROW = { scale: 0.94, duration: 0.8 } as const;
+export const SHAPE_DRIFT = 6;
+
+/** How long each style's entrances take, as a share of the house durations (never under 0.4 s). */
+export const STYLE_DURATION_SCALE = { calm: 1, crisp: 0.85, lively: 1, still: 1 } as const;
+export const STYLE_STAGGER = { calm: STAGGER, crisp: 0.05, lively: STAGGER, still: STAGGER } as const;

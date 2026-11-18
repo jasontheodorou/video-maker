@@ -1,94 +1,22 @@
-// Brands page, one column: the list of brands as one bordered list of rows (each row opens the editor;
-// duplicate and delete sit in a small More menu and are asked in the row, not in dialogs), the new-brand
-// form, and the brand editor.
+// The brand gallery: every brand as a row (each opens the studio; Duplicate and Delete sit in a More
+// menu and are asked in the row, not in dialogs), with the New brand form beside it.
 import { Button, Menu } from "@mantine/core";
 import { ArrowRight, CaretDown, CaretRight, Copy, Plus, Trash } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, plural } from "../shared/api";
 import { AnimatedItem, AnimatedList, Collapse, Reveal } from "../shared/motion";
-import { ErrorSummary, Field, Message, PageHeader, Shell, SkeletonBlock, SkeletonLines, Tag, describedBy, type SummaryItem } from "../shared/ui";
-import type { BrandSummary, Meta } from "../make/types";
-import { BrandEditor, DELETE_DETAIL } from "./BrandEditor";
+import { ErrorSummary, Field, Message, Tag, describedBy, type SummaryItem } from "../shared/ui";
+import type { BrandSummary } from "../make/types";
+import { AppShell } from "../shared/studio";
+import { Link } from "../shared/router";
 
-type View = { kind: "loading" } | { kind: "list"; message?: string; error?: string } | { kind: "editor"; id: string; notes?: string[] };
+export { BrandsWorkspace as BrandsPage } from "./BrandsWorkspace";
 
-export function BrandsPage() {
-  const [meta, setMeta] = useState<Meta | null>(null);
-  const [brands, setBrands] = useState<BrandSummary[]>([]);
-  const [view, setView] = useState<View>({ kind: "loading" });
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const showList = useCallback(async (message?: string, error?: string) => {
-    document.title = "Brands - Video maker";
-    window.history.replaceState(null, "", "/brands");
-    try {
-      setBrands(await api<BrandSummary[]>("GET", "/api/brands"));
-    } catch {
-      /* keep the old list */
-    }
-    setView({ kind: "list", message, error });
-    window.scrollTo({ top: 0 });
-  }, []);
-
-  const openEditor = useCallback((id: string, notes?: string[]) => {
-    setView({ kind: "editor", id, notes });
-    window.scrollTo({ top: 0 });
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [m, b] = await Promise.all([api<Meta>("GET", "/api/meta"), api<BrandSummary[]>("GET", "/api/brands")]);
-        setMeta(m);
-        setBrands(b);
-      } catch (e) {
-        setLoadError((e as Error).message);
-        return;
-      }
-      const id = new URLSearchParams(location.search).get("brand");
-      if (id) openEditor(id);
-      else setView({ kind: "list" });
-    })();
-  }, [openEditor]);
-
-  /** Delete a brand (the question has already been asked in the page). Returns an error message if it fails. */
-  async function removeBrand(b: { id: string; name: string }): Promise<string | void> {
-    try {
-      await api("DELETE", `/api/brands/${encodeURIComponent(b.id)}`, { confirm: b.id });
-    } catch (e) {
-      return (e as Error).message;
-    }
-    await showList(`${b.name} has been deleted.`);
-  }
-
-  return (
-    <Shell current="brands">
-      {loadError ? (
-        <div className="page-head">
-          <ErrorSummary items={[loadError]} />
-        </div>
-      ) : view.kind === "loading" ? (
-        // No heading until the list is ready: the page title and the brands arrive together.
-        <div className="page-head">
-          <SkeletonLines lines={1} height={44} label="Loading brands" />
-          <div className="brands-section">
-            <SkeletonBlock height={232} label="" />
-          </div>
-        </div>
-      ) : view.kind === "list" ? (
-        <BrandList key={`${view.message ?? ""}${view.error ?? ""}`} brands={brands} message={view.message} error={view.error} onOpen={openEditor} onRemove={removeBrand} />
-      ) : meta ? (
-        <Reveal key={view.id} y={8}>
-          <BrandEditor id={view.id} notes={view.notes} meta={meta} onBack={() => showList()} onLoadError={(msg) => showList(undefined, msg)} removeBrand={removeBrand} />
-        </Reveal>
-      ) : null}
-    </Shell>
-  );
-}
+export const DELETE_DETAIL = ["Deletes the brand and its files. Videos already made stay, but can't be remade."];
 
 // ---------- list ----------
 
-function BrandList({ brands, message, error, onOpen, onRemove }: { brands: BrandSummary[]; message?: string; error?: string; onOpen: (id: string, notes?: string[]) => void; onRemove: (b: BrandSummary) => Promise<string | void> }) {
+export function BrandList({ brands, message, error, onOpen, onRemove, top }: { brands: BrandSummary[]; message?: string; error?: string; top?: React.ReactNode; onOpen: (id: string, notes?: string[]) => void; onRemove: (b: BrandSummary) => Promise<string | void> }) {
   const [name, setName] = useState("");
   const [from, setFrom] = useState("blank");
   const [nameError, setNameError] = useState<string | null>(null);
@@ -121,9 +49,12 @@ function BrandList({ brands, message, error, onOpen, onRemove }: { brands: Brand
     }
   }
 
-  return (
-    <>
-      <PageHeader title="Brands" lede="Colours, fonts, logo and voice for every video." />
+  const monitor = (
+    <div className="bw-pad bw-canvas">
+      {top}
+      <h1 className="ws-title ws-title--big" id="brands-h" tabIndex={-1}>
+        Brands
+      </h1>
       {message ? (
         <Reveal className="list-message">
           <Message tone="ok" role="status" focusRef={messageRef}>
@@ -134,45 +65,44 @@ function BrandList({ brands, message, error, onOpen, onRemove }: { brands: Brand
       <div id="list-errors" className="list-errors">
         <ErrorSummary items={summary.items} focusKey={summary.key} />
       </div>
-
-      <section className="brands-section" aria-labelledby="your-brands">
-        <h2 className="visually-hidden" id="your-brands">
-          Your brands
-        </h2>
-        <AnimatedList className="brand-rows plain-list">
-          {brands.map((b, i) => (
-            <BrandRow key={b.id} b={b} index={i} onOpen={onOpen} onRemove={onRemove} />
-          ))}
-        </AnimatedList>
-      </section>
-
-      <section className="brands-section add-brand" aria-labelledby="add-brand">
-        <h2 className="h3" id="add-brand">
-          New brand
-        </h2>
-        <form noValidate onSubmit={create} className="add-brand__form card">
-          <Field id="new-name" label="Name of the organisation or brand" hint="For example, Riverside District Council." error={nameError}>
-            <input className="input" type="text" id="new-name" maxLength={80} autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameError ? true : undefined} aria-describedby={describedBy("new-name", { hint: 1, error: nameError })} />
-          </Field>
-          <Field id="new-from" label="Base it on" hint="Fonts and settings only.">
-            <select className="select" id="new-from" value={from} onChange={(e) => setFrom(e.target.value)} aria-describedby="new-from-hint">
-              <option value="blank">Nothing, start blank</option>
-              {brands.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className="buttons buttons-gap">
-            <Button type="submit" aria-disabled={busy || undefined} leftSection={<Plus size={22} weight="bold" aria-hidden="true" />}>
-              {busy ? "Creating..." : "Create brand"}
-            </Button>
-          </div>
-        </form>
-      </section>
-    </>
+      <h2 className="visually-hidden" id="your-brands">
+        Your brands
+      </h2>
+      <AnimatedList className="brand-rows plain-list" aria-labelledby="your-brands">
+        {brands.map((b, i) => (
+          <BrandRow key={b.id} b={b} index={i} onOpen={onOpen} onRemove={onRemove} />
+        ))}
+      </AnimatedList>
+    </div>
   );
+  const inspector = (
+    <div className="bw-pad">
+      <h2 className="insp-h" id="add-brand">
+        New brand
+      </h2>
+      <form noValidate onSubmit={create}>
+        <Field id="new-name" label="Name of the organisation or brand" hint="For example, Riverside District Council." error={nameError}>
+          <input className="input" type="text" id="new-name" maxLength={80} autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} aria-invalid={nameError ? true : undefined} aria-describedby={describedBy("new-name", { hint: 1, error: nameError })} />
+        </Field>
+        <Field id="new-from" label="Start from" hint="Copies fonts and settings.">
+          <select className="select" id="new-from" value={from} onChange={(e) => setFrom(e.target.value)} aria-describedby="new-from-hint">
+            <option value="blank">Blank</option>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div className="buttons buttons-gap">
+          <Button type="submit" loading={busy} leftSection={<Plus size={22} weight="bold" aria-hidden="true" />}>
+            Create brand
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+  return <AppShell workspace="brands" monitor={monitor} inspector={{ label: "New brand", content: inspector }} />;
 }
 
 /**
@@ -239,7 +169,7 @@ function BrandRow({ b, index, onOpen, onRemove }: { b: BrandSummary; index: numb
     }
   }
 
-  const href = `/brands?brand=${encodeURIComponent(b.id)}`;
+  const href = `/brands/${encodeURIComponent(b.id)}/overview`;
   const nProblems = b.errors?.length ?? 0;
   return (
     <AnimatedItem className={`brand-row${mode ? " brand-row--open" : ""}`} style={{ ["--i" as string]: index }}>
@@ -249,16 +179,9 @@ function BrandRow({ b, index, onOpen, onRemove }: { b: BrandSummary; index: numb
         </span>
         <div className="brand-row__main">
           <h3 className="brand-row__name">
-            <a
-              className="brand-row__link"
-              href={href}
-              onClick={(e) => {
-                e.preventDefault();
-                onOpen(b.id);
-              }}
-            >
+            <Link className="brand-row__link" to={href}>
               {b.name}
-            </a>
+            </Link>
           </h3>
           <p className="brand-row__tags">
             {b.ok ? <Tag tone="good">Ready</Tag> : <Tag tone="bad">{nProblems ? plural(nProblems, "problem") : "Has problems"}</Tag>}

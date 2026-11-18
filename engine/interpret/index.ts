@@ -22,7 +22,9 @@ import { textFitCheck } from "../lint";
 import { retainBrowser, releaseBrowser } from "../browser";
 import { PURPOSES, CHANNELS, type Facts } from "../schema";
 import { listMedia } from "../media";
-import type { Spec } from "../spec";
+import type { Spec, Look } from "../spec";
+import { MOTION_STYLES } from "../motion-rules";
+import type { SizeId } from "../config";
 import { callModel, InterpreterError, type ModelResult } from "./backends";
 import { interpreterSettings, type InterpreterSettings } from "./settings";
 import { chooseIcon, iconHints } from "./icons";
@@ -64,6 +66,10 @@ export interface InterpretInput {
   checkFit?: boolean;
   /** Where the fit check writes its pages. Default: a temporary folder. */
   workDir?: string;
+  /** Length chosen on the Make page. Wins over a length the brief asks for. */
+  requestedSize?: SizeId;
+  /** Look chosen on the Make page (schemes and motion style). The model may only suggest a motion style. */
+  look?: Look;
 }
 
 export interface InterpretResult {
@@ -103,6 +109,17 @@ const UnderstandingSchema = z.object({
   mustKeep: z.array(z.string()),
   missing: z.array(z.string()),
 });
+
+/**
+ * The video's look: the person's choices on the Make page, plus the model's motion style suggestion when the person
+ * left the style to the brand. The model never chooses colour schemes.
+ */
+function lookFor(chosen: Look | undefined, written: unknown): { look?: Look } {
+  const suggested = written && typeof written === "object" ? (written as { motionStyle?: unknown }).motionStyle : undefined;
+  const style = chosen?.motionStyle ?? ((MOTION_STYLES as readonly unknown[]).includes(suggested) ? (suggested as Look["motionStyle"]) : undefined);
+  const look: Look = { ...(chosen ?? {}), ...(style ? { motionStyle: style } : {}) };
+  return Object.keys(look).length ? { look } : {};
+}
 
 export class InterpretError extends Error {
   /** False when trying the same brief again cannot help: the brief itself must change. */
@@ -283,7 +300,7 @@ function estimateLength(spec: Spec, brand: LoadedBrand, formats: FormatId[]): { 
   );
   try {
     return {
-      timeline: computeTimeline(spec, phrases, decision, { id: "estimate", speed, file: "", sampleRate: 24000 }, { captionFits: captionFitter(brand, formats) }),
+      timeline: computeTimeline(spec, phrases, decision, { id: "estimate", speed, file: "", sampleRate: 24000 }, { captionFits: captionFitter(brand, formats), brand }),
     };
   } catch (e) {
     if (e instanceof TimingError) return { problem: `${e.message} (This is an estimate from the word count.)` };
@@ -417,6 +434,11 @@ export async function interpretBrief(input: InterpretInput): Promise<InterpretRe
     notes.push(`The brief does not say: ${m}`);
   }
   const facts = factsFrom(understanding);
+  // The Make page's length wins over one the brief asks for (the model reads it as a hint only).
+  if (input.requestedSize) {
+    facts.requestedSize = input.requestedSize;
+    delete facts.requestedSeconds;
+  }
   const plan = planFor(facts, understanding);
   progress({
     stage: "understand",
@@ -459,6 +481,7 @@ export async function interpretBrief(input: InterpretInput): Promise<InterpretRe
         ...(voice ? { voice } : {}),
         ...(input.formats?.length ? { formats: input.formats } : {}),
         facts,
+        ...lookFor(input.look, written?.look),
         scenes: written?.scenes,
       };
       progress({ stage: "check", status: "start", message: "Checking the script against the rules", attempt });

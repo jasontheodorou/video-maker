@@ -19,7 +19,8 @@ export const title: SceneDefinition<Slots> = {
   label: "Title",
   description: "Opening card with the logo and a short headline. Use it for the hook. Title up to 42 characters, line under it up to 70.",
   beats: ["hook"],
-  surface: "dark",
+  legacyScheme: "dark",
+  schemeNeed: "bookends",
   slots: Slots,
   text: [
     { slot: "eyebrow", maxChars: 40, maxLines: { "16x9": 1, "9x16": 2, "1x1": 1 } },
@@ -33,18 +34,18 @@ export const title: SceneDefinition<Slots> = {
     emphasis: ["changing"],
   },
   elements: (s) => [
-    { id: "logo", entrance: "fade" },
-    { id: "bar", entrance: "fade" },
-    ...(s.eyebrow ? [{ id: "eyebrow", entrance: "riseSmall" as const, slot: "eyebrow" }] : []),
-    { id: "title", entrance: "riseLarge", slot: "title" },
-    ...(s.subtitle ? [{ id: "subtitle", entrance: "rise" as const, slot: "subtitle" }] : []),
+    { id: "logo", role: "logo" as const, entrance: "fade" },
+    { id: "bar", role: "accent" as const, entrance: "fade" },
+    ...(s.eyebrow ? [{ id: "eyebrow", role: "eyebrow" as const, entrance: "riseSmall" as const, slot: "eyebrow" }] : []),
+    { id: "title", role: "headline" as const, entrance: "riseLarge", slot: "title" },
+    ...(s.subtitle ? [{ id: "subtitle", role: "body" as const, entrance: "rise" as const, slot: "subtitle" }] : []),
   ],
   markup: (ctx) => {
     const s = ctx.slots;
     const id = ctx.sceneId;
     return `
 <div class="content">
-  <div class="logo anim" id="${id}-logo"><img src="${ctx.logo("onDark")}" alt="${ctx.esc(ctx.brand.brand.logo.alt)}"></div>
+  <div class="logo anim" id="${id}-logo"><img src="${ctx.logo()}" alt="${ctx.esc(ctx.brand.brand.logo.alt)}"></div>
   <div class="block">
     <div class="bar anim" id="${id}-bar"></div>
     ${s.eyebrow ? `<p class="eyebrow t-label anim" id="${id}-eyebrow" data-fit="eyebrow">${ctx.esc(s.eyebrow)}</p>` : ""}
@@ -56,26 +57,26 @@ export const title: SceneDefinition<Slots> = {
   layouts: {
     "16x9": (ctx) => `
 #${ctx.sceneId} .content{display:flex;flex-direction:column}
-#${ctx.sceneId} .logo img{height:var(--logo-h);width:auto;display:block}
+#${ctx.sceneId} .logo img{height:var(--logo-h);width:auto;max-width:100%;object-fit:contain;object-position:left center;display:block}
 #${ctx.sceneId} .block{margin:auto 0;max-width:1632px;padding-top:var(--sp-5);padding-bottom:var(--sp-4)}
-#${ctx.sceneId} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--dark-accent);margin-bottom:var(--sp-5)}
-#${ctx.sceneId} .eyebrow{color:var(--dark-accent);margin-bottom:var(--sp-3)}
+#${ctx.sceneId} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-5)}
+#${ctx.sceneId} .eyebrow{color:var(--hl);margin-bottom:var(--sp-3)}
 #${ctx.sceneId} .subtitle{margin-top:var(--sp-5);max-width:1400px}`,
     "9x16": (ctx) => `
 #${ctx.sceneId} .content{display:flex;flex-direction:column}
-#${ctx.sceneId} .logo img{height:var(--logo-h);width:auto;display:block}
+#${ctx.sceneId} .logo img{height:var(--logo-h);width:auto;max-width:100%;object-fit:contain;object-position:left center;display:block}
 #${ctx.sceneId} .block{margin:auto 0;width:100%;padding-top:var(--sp-5)}
 #${ctx.sceneId} .title{font-size:calc(var(--t-display) * 0.9)}
-#${ctx.sceneId} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--dark-accent);margin-bottom:var(--sp-5)}
-#${ctx.sceneId} .eyebrow{color:var(--dark-accent);margin-bottom:var(--sp-3)}
+#${ctx.sceneId} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-5)}
+#${ctx.sceneId} .eyebrow{color:var(--hl);margin-bottom:var(--sp-3)}
 #${ctx.sceneId} .subtitle{margin-top:var(--sp-6)}`,
     "1x1": (ctx) => `
 #${ctx.sceneId} .content{display:flex;flex-direction:column}
-#${ctx.sceneId} .logo img{height:var(--logo-h);width:auto;display:block}
+#${ctx.sceneId} .logo img{height:var(--logo-h);width:auto;max-width:100%;object-fit:contain;object-position:left center;display:block}
 #${ctx.sceneId} .block{margin:auto 0;width:100%;padding-top:var(--sp-3)}
 #${ctx.sceneId} .title{font-size:calc(var(--t-display) * 0.85)}
-#${ctx.sceneId} .bar{width:var(--sp-10);height:var(--sp-1);background:var(--dark-accent);margin-bottom:var(--sp-4)}
-#${ctx.sceneId} .eyebrow{color:var(--dark-accent);margin-bottom:var(--sp-2)}
+#${ctx.sceneId} .bar{width:var(--sp-10);height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-4)}
+#${ctx.sceneId} .eyebrow{color:var(--hl);margin-bottom:var(--sp-2)}
 #${ctx.sceneId} .subtitle{margin-top:var(--sp-4)}`,
   },
 };

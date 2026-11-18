@@ -188,7 +188,7 @@ function StepMark({ kind, n }: { kind: "done" | "active" | "failed" | "waiting";
 }
 
 /** The steps, one under the other: a number, a turning ring at work, a tick when done, a red mark on a problem. */
-function Steps({ view, stopping = false }: { view: JobViewData; stopping?: boolean }) {
+export function Steps({ view, stopping = false }: { view: JobViewData; stopping?: boolean }) {
   const j = view.job;
   const busy = isBusy(j.state);
   const hl = usePillId("step");
@@ -229,7 +229,7 @@ function StepsFold({ view }: { view: JobViewData }) {
   );
 }
 
-function JobProgress({ view, onRetry, poll, applyView, notify, setNotify }: { view: JobViewData; onRetry: () => void; poll: () => void; applyView: (v: JobViewData) => void; notify: boolean; setNotify: (on: boolean) => void }) {
+export function JobProgress({ view, onRetry, poll, applyView, notify, setNotify }: { view: JobViewData; onRetry: () => void; poll: () => void; applyView: (v: JobViewData) => void; notify: boolean; setNotify: (on: boolean) => void }) {
   const j = view.job;
   const busy = isBusy(j.state);
   const [askStop, setAskStop] = useState(false);
@@ -448,7 +448,7 @@ function JobProgress({ view, onRetry, poll, applyView, notify, setNotify }: { vi
 
 // ---------- problems ----------
 
-function JobError({ view, onRetry, onChangeBrief, onEditScript }: { view: JobViewData; onRetry: () => void; onChangeBrief: (t: string) => void; onEditScript: () => void }) {
+export function JobError({ view, onRetry, onChangeBrief, onEditScript }: { view: JobViewData; onRetry: () => void; onChangeBrief: (t: string) => void; onEditScript: () => void }) {
   const j = view.job;
   const e = j.error!;
   const needsDetail = e.retryable === false;
@@ -509,7 +509,7 @@ function JobError({ view, onRetry, onChangeBrief, onEditScript }: { view: JobVie
 
 // ---------- results ----------
 
-function Decision({ view }: { view: JobViewData }) {
+export function Decision({ view }: { view: JobViewData }) {
   const d = view.decision;
   const size = ({ short: "Short", medium: "Medium", long: "Long" } as Record<string, string>)[d.size] ?? d.size;
   return (
@@ -552,11 +552,11 @@ function Decision({ view }: { view: JobViewData }) {
   );
 }
 
-const DIMS: Record<string, [number, number]> = { "16x9": [1920, 1080], "9x16": [1080, 1920], "1x1": [1080, 1080] };
-const ORDER = ["16x9", "9x16", "1x1"];
-const SHAPE_WORD: Record<string, string> = { "16x9": "Landscape", "9x16": "Portrait", "1x1": "Square" };
-const RATIO: Record<string, string> = { "16x9": "16:9", "9x16": "9:16", "1x1": "1:1" };
-const vttFor = (srt: string | null) => (srt ? srt.replace(/\.srt(\?.*)?$/, ".vtt") : null);
+export const DIMS: Record<string, [number, number]> = { "16x9": [1920, 1080], "9x16": [1080, 1920], "1x1": [1080, 1080] };
+export const ORDER = ["16x9", "9x16", "1x1"];
+export const SHAPE_WORD: Record<string, string> = { "16x9": "Landscape", "9x16": "Portrait", "1x1": "Square" };
+export const RATIO: Record<string, string> = { "16x9": "16:9", "9x16": "9:16", "1x1": "1:1" };
+export const vttFor = (srt: string | null) => (srt ? srt.replace(/\.srt(\?.*)?$/, ".vtt") : null);
 
 /** The shape of a format, drawn small, for the switcher. */
 function Shape({ format }: { format: string }) {
@@ -676,7 +676,7 @@ function Videos({ view }: { view: JobViewData }) {
 }
 
 /** Delete a finished, failed or stopped video, after asking. */
-function DeleteJob({ title, onDelete }: { title: string; onDelete: () => Promise<string | void> }) {
+export function DeleteJob({ title, onDelete }: { title: string; onDelete: () => Promise<string | void> }) {
   const [asking, setAsking] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const back = useRef(false);
@@ -710,7 +710,7 @@ function DeleteJob({ title, onDelete }: { title: string; onDelete: () => Promise
  * "Tell me when it's ready": asks the browser for permission only when ticked, then the page sends one quiet
  * notification when the video is ready and the tab is hidden. Not shown where notifications do not exist.
  */
-function NotifyToggle({ on, setOn }: { on: boolean; setOn: (on: boolean) => void }) {
+export function NotifyToggle({ on, setOn }: { on: boolean; setOn: (on: boolean) => void }) {
   const [note, setNote] = useState("");
   if (typeof window === "undefined" || !("Notification" in window)) return null;
   const blocked = "Notifications are blocked for this site. Allow them in your browser settings.";
@@ -749,7 +749,7 @@ function NotifyToggle({ on, setOn }: { on: boolean; setOn: (on: boolean) => void
 }
 
 /** The contact sheet as a short preview; the whole sheet opens full size. */
-function Sheet({ src }: { src: string }) {
+export function Sheet({ src }: { src: string }) {
   return (
     <Reveal as="section" id="job-sheet" className="job-block" aria-labelledby="sheet-h">
       <h3 className="h3" id="sheet-h">

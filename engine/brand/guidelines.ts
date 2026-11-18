@@ -79,6 +79,13 @@ export interface SuggestedColour {
   context: string;
   /** How the value was written: hex, rgb or cmyk (cmyk is converted roughly). */
   from: "hex" | "rgb" | "cmyk";
+  /** Index of the line it was found on. */
+  line?: number;
+  /** Palette group from the heading it sits under: core, accent, secondary or neutral. */
+  group?: string;
+  /** For a listed tint ("Golden" under "10% tints"): the parent colour's name, and the step. */
+  tintOf?: string;
+  tintStep?: 10 | 25;
 }
 
 export interface SuggestedFont {
@@ -103,6 +110,8 @@ export interface TokenSuggestions {
   guidelines: string;
   /** What could not be found, in plain English. */
   gaps: string[];
+  /** Colour groups, listed tints and colour rules ("Text should be in navy or black"). */
+  colourRules?: ColourStructure["rules"];
 }
 
 /** Role words, used only when the colour's name says so or the text says "<role> colour". */
@@ -128,14 +137,20 @@ export function suggestTokensFromText(text: string): TokenSuggestions {
     const line = lines[i];
     const before = line.slice(0, matchIndex);
     // A name is the words just before the value on the line, or the line above when the line holds only codes.
-    let name = colourName(before) ?? (i > 0 && !colourName(before) && /^[#\s\w:,().%-]*$/.test(line) && !/[a-z]{3,}/i.test(before) ? colourName(lines[i - 1]) : undefined);
+    const codesOnly = /^[#\s\w:,().%/-]*$/.test(line) && !/[a-z]{3,}/i.test(before.replace(/\b(hex|rgb|cmyk|pantone|pms|ral)\b/gi, ""));
+    let name = colourName(before) ?? (i > 0 && codesOnly ? colourName(lines[i - 1]) : undefined);
+    if (!name && i > 1 && codesOnly && /^\s*(hex|rgb|cmyk)\b/i.test(lines[i - 1])) name = colourName(lines[i - 2]);
     if (name && name.length > 40) name = name.slice(0, 40).trim();
     const role = ROLE_WORDS.find(([re]) => (name && re.test(name)) || re.test(line))?.[1];
-    colours.push({ value, name, role, context: line.slice(0, 160), from });
+    colours.push({ value, name, role, context: line.slice(0, 160), from, line: i });
   };
+  // A colour usually lists hex, RGB and CMYK on lines next to each other. When it gives a hex value, the RGB and CMYK
+  // lines near it are the same colour (and guides have typos in them), so only the hex value is read.
+  const hexNear = (i: number) => [i - 2, i - 1, i, i + 1, i + 2].some((k) => k >= 0 && k < lines.length && /#\s?[0-9a-f]{6}\b|\bhex\s*:?\s*#?\s?[0-9a-f]{6}\b/i.test(lines[k]));
   lines.forEach((line, i) => {
-    for (const m of line.matchAll(/#([0-9a-f]{6}|[0-9a-f]{3})\b/gi)) addColour(normaliseHex(m[0]), i, "hex", m.index ?? 0);
+    for (const m of line.matchAll(/#\s?([0-9a-f]{6}|[0-9a-f]{3})\b/gi)) addColour(normaliseHex(m[1]), i, "hex", m.index ?? 0);
     for (const m of line.matchAll(/\bhex\s*:?\s*([0-9a-f]{6})\b/gi)) addColour(normaliseHex(m[1]), i, "hex", m.index ?? 0);
+    if (hexNear(i)) return;
     for (const m of line.matchAll(/\bR\s*:?\s*(\d{1,3})\s*,?\s*G\s*:?\s*(\d{1,3})\s*,?\s*B\s*:?\s*(\d{1,3})\b/g)) addColour(rgbHex(m[1], m[2], m[3]), i, "rgb", m.index ?? 0);
     for (const m of line.matchAll(/\bRGB\s*:?\s*\(?\s*(\d{1,3})[\s,/]+(\d{1,3})[\s,/]+(\d{1,3})\b/gi)) addColour(rgbHex(m[1], m[2], m[3]), i, "rgb", m.index ?? 0);
     for (const m of line.matchAll(/\brgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/gi)) addColour(rgbHex(m[1], m[2], m[3]), i, "rgb", m.index ?? 0);
@@ -144,6 +159,7 @@ export function suggestTokensFromText(text: string): TokenSuggestions {
       for (const m of line.matchAll(/\bC\s*:?\s*(\d{1,3})\s*,?\s*M\s*:?\s*(\d{1,3})\s*,?\s*Y\s*:?\s*(\d{1,3})\s*,?\s*K\s*:?\s*(\d{1,3})\b/g)) addColour(cmykHex(+m[1], +m[2], +m[3], +m[4]), i, "cmyk", m.index ?? 0);
     }
   });
+  const structure = extractColourStructure(lines, colours);
   if (!colours.length) gaps.push("No colour values (hex, RGB or CMYK) were found.");
   if (colours.some((c) => c.from === "cmyk")) gaps.push("Some colours were only given as CMYK. They were converted roughly; check them against the screen (RGB or hex) values.");
 
@@ -233,7 +249,133 @@ export function suggestTokensFromText(text: string): TokenSuggestions {
     .map((s) => `${s.heading}\n${s.body.slice(0, 12).map((b) => `- ${b.replace(/^[-•*]\s*/, "")}`).join("\n")}`);
   const guidelines = keep.join("\n\n").slice(0, 6000);
 
-  return { name, colours, fonts, toneOfVoice, rules, logo: { minHeightPx, notes: logoNotes }, iconWeight, voice, guidelines, gaps };
+  return { name, colours: structure.colours, fonts, toneOfVoice, rules, logo: { minHeightPx, notes: logoNotes }, iconWeight, voice, guidelines, gaps, colourRules: structure.rules };
+}
+
+// ---------- colour structure: groups, listed tints and colour rules ----------
+
+export interface ColourStructure {
+  colours: SuggestedColour[];
+  rules: { text?: string[]; never?: Array<{ text: string; background: string }>; source?: string };
+}
+
+const GROUP_WORDS: Array<[RegExp, string]> = [
+  [/\b(core|primary|main|corporate)\b/i, "core"],
+  [/\b(accent|highlight)\b/i, "accent"],
+  [/\b(secondary|supporting|design|extended|complementary)\b/i, "secondary"],
+  [/\b(neutral|neutrals|greys?|grays?)\b/i, "neutral"],
+];
+
+/**
+ * Read the structure of a colour guide: the group of each colour (from the heading it sits under), the tints it
+ * lists (a "10%" or "25%" section names its parents again), and rules about text colours. Pure and deterministic.
+ * Rules name colours by their names in the guide ("navy", "black"); the import maps them to palette ids.
+ */
+export function extractColourStructure(lines: string[], colours: SuggestedColour[]): ColourStructure {
+  // Sections: a short heading-like line about colours sets the group, or a tint step.
+  const sections: Array<{ at: number; group?: string; tint?: 10 | 25 }> = [];
+  lines.forEach((l, i) => {
+    const short = l.length <= 60 && l.split(/\s+/).length <= 4 && !/[.;,]$/.test(l) && !/#\s?[0-9a-f]{3}/i.test(l) && !/\b(hex|rgb|cmyk)\b/i.test(l);
+    const tint = /\b(10|25)\s?%/.exec(l);
+    if (short && tint && /\btints?\b/i.test(l)) {
+      sections.push({ at: i, tint: Number(tint[1]) as 10 | 25 });
+      return;
+    }
+    if (short && /\b(colou?rs?|palette)\b/i.test(l)) {
+      let group = GROUP_WORDS.find(([re]) => re.test(l))?.[1];
+      // "Design colour palette", then a body line "Our secondary colours complement ...": the body says which.
+      if (!group || group === "secondary") {
+        const body = lines.slice(i + 1, i + 3).join(" ");
+        const m = /\b(core|primary|accent|secondary|supporting|neutral)\s+colou?r/i.exec(body);
+        if (m) group = GROUP_WORDS.find(([re]) => re.test(m[1]))?.[1] ?? group;
+      }
+      if (group) sections.push({ at: i, group });
+    }
+  });
+  const sectionAt = (line: number) => [...sections].reverse().find((s) => s.at <= line);
+  const norm = (n?: string) => (n ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  const parents = new Map<string, SuggestedColour>();
+  const out: SuggestedColour[] = [];
+  for (const c of colours) {
+    const sec = c.line != null ? sectionAt(c.line) : undefined;
+    if (sec?.tint && c.name) {
+      out.push({ ...c, tintStep: sec.tint, tintOf: c.name });
+      continue;
+    }
+    const withGroup = { ...c, group: sec?.group ?? c.group };
+    out.push(withGroup);
+    if (c.name) parents.set(norm(c.name), withGroup);
+  }
+  // A core section often names its core colours in its first sentence ("The brand blue, navy and black are to be
+  // visible") and lists others after them ("The remaining colours ... add detail"): those others are accents.
+  for (const sec of sections.filter((x) => x.group === "core")) {
+    const next = sections.find((x) => x.at > sec.at)?.at ?? lines.length;
+    const inSec = out.filter((c) => !c.tintOf && c.line != null && c.line > sec.at && c.line < next && c.group === "core");
+    if (inSec.length < 3) continue;
+    const names = inSec.map((c) => c.name ?? "");
+    for (let i = sec.at + 1; i < Math.min(next, sec.at + 8); i++) {
+      const low = lines[i].toLowerCase();
+      const named = inSec.filter((c) => c.name && new RegExp(`\\b${c.name.toLowerCase().split(" ").pop()}\\b`).test(low));
+      if (named.length >= 2 && named.length < inSec.length) {
+        for (const c of inSec) if (!named.includes(c)) c.group = "accent";
+        break;
+      }
+    }
+    void names;
+  }
+  // A listed tint names its parent, perhaps a little differently ("HMCTS Blue" for "HMCTS blue").
+  for (const t of out) {
+    if (!t.tintOf) continue;
+    const key = norm(t.tintOf);
+    const parent = parents.get(key) ?? [...parents.entries()].find(([k]) => k.endsWith(` ${key}`) || key.endsWith(` ${k}`) || k.split(" ").pop() === key.split(" ").pop())?.[1];
+    if (parent?.name) t.tintOf = parent.name;
+    else {
+      delete t.tintOf;
+      delete t.tintStep;
+    }
+  }
+
+  // Rules: which colours text may use, and pairs to avoid.
+  const named = [...parents.values()].filter((c) => c.name);
+  const mentions = (l: string) => {
+    const low = l.toLowerCase();
+    return named
+      .map((c) => {
+        const full = norm(c.name);
+        const last = full.split(" ").pop()!;
+        const at = low.indexOf(full) >= 0 ? low.indexOf(full) : new RegExp(`\\b${last}\\b`).test(low) ? low.search(new RegExp(`\\b${last}\\b`)) : -1;
+        return { c, at };
+      })
+      .filter((x) => x.at >= 0)
+      .sort((a, b) => a.at - b.at)
+      .map((x) => x.c.name!);
+  };
+  const rules: ColourStructure["rules"] = {};
+  for (const l of lines) {
+    if (rules.text) break;
+    if (!/\b(text|type|copy|headlines?|body)\b.{0,60}\b(must|should|only|always)\b/i.test(l) && !/\b(must|should|only|always)\b.{0,60}\b(text|type|copy)\b/i.test(l)) continue;
+    const names = mentions(l);
+    if (names.length) {
+      rules.text = [...new Set(names)];
+      rules.source = l.slice(0, 400);
+    }
+  }
+  if (rules.text && lines.some((l) => /\bwhite text\b/i.test(l) && /\b(titles?|headings?|graphics|flexib|can|may)\b/i.test(l))) {
+    const white = named.find((c) => /^white$/i.test(c.name!.trim()));
+    rules.text.push(white?.name ?? "White");
+  }
+  for (const l of lines) {
+    if (!/\b(never|avoid|do not|don'?t)\b/i.test(l)) continue;
+    const m = /([A-Za-z][A-Za-z ]{1,30}?)\s+(?:text\s+)?on\s+(?:a\s+|an\s+)?([A-Za-z][A-Za-z ]{1,30})/i.exec(l);
+    if (!m) continue;
+    const a = mentions(m[1]);
+    const b = mentions(m[2]);
+    const lastWord = (x: string) => x.trim().split(" ").pop()!.toLowerCase();
+    const fg = a[a.length - 1] ?? (lastWord(m[1]) === "white" ? "White" : undefined);
+    const bg = b[0];
+    if (fg && bg && fg !== bg) (rules.never ??= []).push({ text: fg, background: bg });
+  }
+  return { colours: out, rules };
 }
 
 function splitSections(lines: string[]): Array<{ heading: string; body: string[] }> {

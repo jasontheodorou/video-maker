@@ -9,7 +9,11 @@ import { fullyVisibleSeconds, cueShift } from "./captions";
 import { timingProblems } from "./align";
 import { getScene } from "./scenes";
 import { SLOT_WORDS } from "./scenes/common";
-import { compileStill, writePage, contentRect, captionRect } from "./compile";
+import { compileStill, writePage, contentRect, captionRect, timelineSchemes, timelineFixed } from "./compile";
+import { assignSchemes } from "./schemes";
+import { resolveMotion } from "./motion-plan";
+import { peakEdgeSpeed } from "./transitions";
+import { MAX_EDGE_PX_PER_FRAME, SETTLED_SHARE, styleWarning, type TextEffectId } from "./motion-rules";
 import { newPage } from "./browser";
 import { sceneId, type Spec } from "./spec";
 import type { LoadedBrand } from "./brand";
@@ -22,6 +26,9 @@ export interface LintFinding {
   scene?: string;
   slot?: string;
   message: string;
+  /** For motion findings: the scene index (0-based) and the spec field (motion.text and so on). */
+  sceneIndex?: number;
+  field?: string;
 }
 
 /**
@@ -120,6 +127,7 @@ export async function sceneFitCheck(
   dir: string,
   fontChecks = brand.brand.fonts.faces.map((f) => `${f.style === "italic" ? "italic " : ""}${f.weight} 40px "${f.family}"`),
   number?: number,
+  look: { scheme?: string; textEffect?: TextEffectId } = {},
 ): Promise<LintFinding[]> {
   const findings: LintFinding[] = [];
   const format = getFormat(formatId);
@@ -128,7 +136,9 @@ export async function sceneFitCheck(
   const def = getScene(scene.type);
   const where = number ? `Scene ${number} (${def.label})` : def.label;
   const fmt = FORMAT_WORDS[formatId];
-  const page = compileStill({ type: scene.type, slots: scene.slots, id }, brand, formatId);
+  // Key words are measured at the heaviest weight any usable scheme gives them, so a later change of scheme never
+  // breaks the fit. The text effect is laid out as the video lays it out.
+  const page = compileStill({ type: scene.type, slots: scene.slots, id }, brand, formatId, { scheme: look.scheme, textEffect: look.textEffect, heaviest: true });
   for (const iss of page.issues) findings.push({ level: iss.level, check: "compile", format: formatId, scene: id, message: iss.message });
   const file = writePage(page, dir, `${id}.html`);
   const m = await measurePage(file, format.width, format.height, fontChecks);
@@ -177,6 +187,14 @@ const FORMAT_WORDS: Record<FormatId, string> = { "16x9": "landscape", "9x16": "p
 export async function textFitCheck(spec: Spec, brand: LoadedBrand, timeline: Timeline | null, formats: FormatId[], workDir: string, signal?: AbortSignal): Promise<LintFinding[]> {
   const findings: LintFinding[] = [];
   const fontChecks = brand.brand.fonts.faces.map((f) => `${f.style === "italic" ? "italic " : ""}${f.weight} 40px "${f.family}"`);
+  // Each scene's scheme and text effect, as the video will have them.
+  let schemes: string[] = [];
+  try {
+    schemes = timeline ? timelineSchemes(spec, timeline, brand) : assignSchemes(spec, brand).scenes.map((c) => c.scheme);
+  } catch {
+    schemes = [];
+  }
+  const motion = resolveMotion(spec, brand, schemes, timeline ? timelineFixed(timeline) : []);
   for (const formatId of formats) {
     const format = getFormat(formatId);
     const content = contentRect(format);
@@ -184,7 +202,7 @@ export async function textFitCheck(spec: Spec, brand: LoadedBrand, timeline: Tim
     for (let i = 0; i < spec.scenes.length; i++) {
       if (signal?.aborted) return findings;
       const s = spec.scenes[i];
-      findings.push(...(await sceneFitCheck({ type: s.type, slots: s.slots as Record<string, unknown>, id: sceneId(s, i) }, brand, formatId, dir, fontChecks, i + 1)));
+      findings.push(...(await sceneFitCheck({ type: s.type, slots: s.slots as Record<string, unknown>, id: sceneId(s, i) }, brand, formatId, dir, fontChecks, i + 1, { scheme: schemes[i], textEffect: motion.scenes[i]?.textEffect })));
     }
     // Captions: render each cue in the caption band and count lines.
     if (timeline) {
@@ -249,6 +267,51 @@ export function timingCheck(timeline: Timeline, minCaption: number): LintFinding
       if (problems.length) out.push({ level: "warning", check: "word-timing", scene: s.id, message: `Captions may be out of step with the voice in "${p.text.slice(0, 50)}": ${problems.join("; ")}.` });
     }
   }
+  return out;
+}
+
+/**
+ * Motion rules (docs/design/studio-spec.md, 5.7). Without a timeline, only the rules that need no scene lengths.
+ * Automatic choices are already made calmer by the resolver; what fails here is a scene's own choice the rules
+ * refuse, text still moving for too long, or a transition moving too fast.
+ */
+export function motionCheck(spec: Spec, timeline: Timeline | null, brand: LoadedBrand): LintFinding[] {
+  const out: LintFinding[] = [];
+  let schemes: string[] = [];
+  try {
+    schemes = timeline ? timelineSchemes(spec, timeline, brand) : assignSchemes(spec, brand).scenes.map((c) => c.scheme);
+  } catch (e) {
+    out.push({ level: "error", check: "schemes", message: (e as Error).message });
+  }
+  const plan = resolveMotion(spec, brand, schemes, timeline ? timelineFixed(timeline) : []);
+  for (const p of plan.problems) out.push({ level: "error", check: "motion", scene: sceneId(spec.scenes[p.scene], p.scene), sceneIndex: p.scene, field: p.field, message: p.message });
+  for (const n of plan.notes) out.push({ level: "warning", check: "motion", message: n });
+  if (!timeline) return out;
+  const sw = styleWarning(plan.style, timeline.duration);
+  if (sw) out.push({ level: "warning", check: "motion", field: "look.motionStyle", message: sw });
+  const cfg = loadConfig();
+  timeline.scenes.forEach((s, i) => {
+    const sid = s.id;
+    // Text is settled for at least 75% of its time on screen.
+    for (const t of s.text) {
+      const el = plan.scenes[i]?.elements.find((e) => e.slot === t.slot);
+      const appear = s.enterAt + (el?.delay ?? 0);
+      const onScreen = t.visibleUntil - appear;
+      if (onScreen > 0 && (t.visibleUntil - t.visibleFrom) / onScreen + 1e-6 < SETTLED_SHARE)
+        out.push({ level: "error", check: "motion", scene: sid, sceneIndex: i, field: "motion.text", message: `Scene ${i + 1}: ${partName(t.slot)} is still moving for too long. Pick a calmer text effect or shorten it.` });
+    }
+    // Transition edges move at most 210 px a frame at 60 fps, in every format.
+    if (s.transitionIn !== "none" && s.transitionIn !== "cut") {
+      for (const f of timeline.formats) {
+        const w = getFormat(f).width;
+        const v = peakEdgeSpeed(s.transitionIn, w, 60, cfg.timing);
+        if (v > MAX_EDGE_PX_PER_FRAME)
+          out.push({ level: "error", check: "motion", scene: sid, sceneIndex: i, field: "motion.transition", message: `Scene ${i + 1}: the ${s.transitionIn} into this scene moves too fast (${Math.round(v)} px a frame).` });
+      }
+    }
+    if (plan.scenes[i]?.textEffect !== "none" && s.duration < 2.5)
+      out.push({ level: "error", check: "motion", scene: sid, sceneIndex: i, field: "motion.text", message: `Scene ${i + 1}: this scene is too short for a text effect.` });
+  });
   return out;
 }
 

@@ -20,6 +20,10 @@ export {
   useOpenFont,
   writePlaceholderLogo,
   makeReverseLogo,
+  paletteFromList,
+  schemesFor,
+  captionsFor,
+  colourIdFrom,
   type BrandRecord,
   type BrandFiles,
   type CreateBrandInput,
@@ -30,7 +34,9 @@ export {
 export { contrastMatrix, legalTextColours, assignColourRoles, proposeSurfaces, normaliseHex, mixWithWhite, type PairResult, type RoleGuess, type SurfaceProposal, type ColourSet } from "./palette";
 export { inspectFontFile, installOpenFont, listOpenFonts, searchOpenFonts, cachedOpenFonts, textToPath, FONT_EXTENSIONS, type FontFileInfo, type OpenFont, type InstalledFace } from "./fonts";
 export { inspectImage, sanitiseUploadedSvg, prepareIconSvg, svgColours, logoWarnings, type ImageInfo, type IconUploadResult } from "./assets";
-export { extractGuidelinesText, suggestTokensFromText, type GuidelinesText, type TokenSuggestions, type SuggestedColour, type SuggestedFont } from "./guidelines";
+export { extractGuidelinesText, suggestTokensFromText, extractColourStructure, type GuidelinesText, type TokenSuggestions, type SuggestedColour, type SuggestedFont, type ColourStructure } from "./guidelines";
 export { importBrandFromFolder, parseColourList, type ImportOptions, type ImportReport, type Gap } from "./import";
 export { renderBrandPreview } from "./preview";
 export { contrastFixes, type ContrastFix } from "./fixes";
+export { recommendSchemes, type Recommendation, type RecommendedScheme, type RecommendOptions, type NearMiss } from "./recommend";
+export { migrateBrand, isV1, STANDARD_GROUPS, type MigrateResult } from "./migrate";

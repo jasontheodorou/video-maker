@@ -1,13 +1,17 @@
 // Timing step: scene length = lead-in + phrases + hold, then the reading-time rule, then whole frames.
-// Scene k+1 starts one transition length before scene k ends (crossfade 0.5 s, wipe 0.8 s).
+// Scene k+1 starts one transition overlap before scene k ends (crossfade 0.5 s, wipe 0.8 s, push 0.7 s, colour
+// sweep 0.5 s). Each scene's colour scheme (engine/schemes.ts) and motion (engine/motion-plan.ts) are decided here
+// and written to timeline.json, so the compiler, the contact sheet and lint all use the same choices.
 // Every time is on the engine's time grid.
 import { loadConfig, readingSeconds, ceilToGrid, roundToGrid, type FormatId } from "./config";
-import { ENTRANCES, STAGGER } from "./motion";
 import { getScene } from "./scenes";
+import { assignSchemes } from "./schemes";
+import { resolveMotion, type MotionFixed } from "./motion-plan";
+import { SETTLED_SHARE } from "./motion-rules";
+import type { LoadedBrand } from "./brand";
 import { countWords } from "./text";
 import { buildCaptions } from "./captions";
 import type { CaptionFits } from "./captionfit";
-import { chooseTransition, transitionSeconds } from "./transitions";
 import { sceneId, specFormats, type Spec } from "./spec";
 import type { Decision, Timeline, SceneTiming, WordTiming } from "./schema";
 
@@ -28,7 +32,7 @@ interface Draft {
   enterAt: number;
   leadIn: number;
   phrasesLocal: Array<PhraseInput & { start: number; end: number }>;
-  text: Array<{ slot: string; words: number; visibleFrom: number; requiredSeconds: number }>;
+  text: Array<{ slot: string; words: number; visibleFrom: number; appearAt: number; requiredSeconds: number }>;
   base: number;
   limitedBy: SceneTiming["limitedBy"];
   extra: number;
@@ -39,16 +43,24 @@ export function computeTimeline(
   phrases: PhraseInput[][],
   decision: Decision | null,
   voice: { id: string; speed: number; file: string; sampleRate: number },
-  /** captionFits: the real caption width test (captionFitter in captionfit.ts). Without it, chunks use word and character limits only. */
-  opts: { captionFits?: CaptionFits | null } = {},
+  /**
+   * captionFits: the real caption width test (captionFitter in captionfit.ts). Without it, chunks use word and
+   * character limits only. brand: for colour schemes and the brand's motion; without it, each scene type keeps
+   * its version 1 surface and the Calm style. fixed: choices to keep from an earlier timeline.
+   */
+  opts: { captionFits?: CaptionFits | null; brand?: LoadedBrand | null; fixed?: Array<MotionFixed | undefined> } = {},
 ): Timeline {
   const cfg = loadConfig();
   const T = cfg.timing;
   const xf = T.crossfade;
   const last = spec.scenes.length - 1;
-  // How each scene arrives, and so how long it overlaps the scene before.
-  const transitions = spec.scenes.map((s, i) => chooseTransition(i === 0 ? null : getScene(spec.scenes[i - 1].type), getScene(s.type)));
-  const overlapOut = (i: number) => (i < last ? transitionSeconds(transitions[i + 1], T) : 0);
+  // Colour schemes, then motion: how each scene arrives, and so how long it overlaps the scene before.
+  const assigned = opts.brand ? assignSchemes(spec, opts.brand) : null;
+  const schemes = assigned ? assigned.scenes.map((c) => c.scheme) : spec.scenes.map((s) => getScene(s.type).legacyScheme);
+  const motion = resolveMotion(spec, opts.brand ?? null, schemes, opts.fixed ?? []);
+  const overlapOut = (i: number) => (i < last ? motion.scenes[i + 1].overlap : 0);
+  // A colour sweep covers the scene before for a moment before the next scene starts under it.
+  const coverOut = (i: number) => (i < last ? motion.scenes[i + 1].overlap + motion.scenes[i + 1].lead : 0);
   if (phrases.length !== spec.scenes.length) throw new TimingError("Each scene needs its voiceover audio. Run the voice step again.");
 
   const drafts: Draft[] = spec.scenes.map((s, i) => {
@@ -64,25 +76,29 @@ export function computeTimeline(
     });
     const speechEnd = phrasesLocal.length ? phrasesLocal[phrasesLocal.length - 1].end : leadIn;
     const slots = s.slots as Record<string, unknown>;
+    const plan = motion.scenes[i];
     const text = def
       .elements(slots)
-      .map((e, order) => ({ e, order }))
+      .map((e, order) => ({ e, order, p: plan.elements[order] }))
       .filter(({ e }) => e.slot && (typeof e.text === "string" || typeof slots[e.slot] === "string"))
-      .map(({ e, order }) => {
+      .map(({ e, p }) => {
         const words = countWords(e.text ?? (slots[e.slot!] as string));
         return {
           slot: e.slot!,
           words,
-          visibleFrom: enterAt + order * STAGGER + ENTRANCES[e.entrance].duration,
+          visibleFrom: enterAt + p.settled,
+          appearAt: enterAt + p.delay,
           requiredSeconds: readingSeconds(words),
         };
       });
-    const xfOut = overlapOut(i);
+    const xfOut = coverOut(i);
     const byVoice = speechEnd + (i === last ? T.endHold : T.hold);
     const byReading = Math.max(0, ...text.map((t) => t.visibleFrom + t.requiredSeconds)) + xfOut;
+    // Text is settled for at least 75% of its time on screen: visibleUntil - visibleFrom >= 0.75 x (visibleUntil - appearAt).
+    const bySettled = Math.max(0, ...text.map((t) => (t.visibleFrom - SETTLED_SHARE * t.appearAt) / (1 - SETTLED_SHARE))) + xfOut;
     const byMin = T.minSceneSeconds;
-    let base = Math.max(byVoice, byReading, byMin);
-    const limitedBy: SceneTiming["limitedBy"] = base === byVoice ? "voice" : base === byReading ? "reading" : "minimum";
+    let base = Math.max(byVoice, byReading, bySettled, byMin);
+    const limitedBy: SceneTiming["limitedBy"] = base === byVoice ? "voice" : base === byReading || base === bySettled ? "reading" : "minimum";
     base = ceilToGrid(base);
     return { id: sceneId(s, i), type: s.type, enterAt, leadIn, phrasesLocal, text, base, limitedBy, extra: 0 };
   });
@@ -112,14 +128,21 @@ export function computeTimeline(
   const scenes: SceneTiming[] = drafts.map((d, i) => {
     const duration = roundToGrid(d.base + d.extra);
     const xfOut = overlapOut(i);
+    const plan = motion.scenes[i];
     const s: SceneTiming = {
       id: d.id,
       type: d.type,
       index: i,
       start: roundToGrid(start),
       duration,
-      transitionIn: transitions[i],
-      transitionSeconds: transitionSeconds(transitions[i], T),
+      transitionIn: plan.transition,
+      transitionSeconds: plan.overlap,
+      ...(assigned ? { scheme: assigned.scenes[i].scheme, schemeAuto: assigned.scenes[i].auto } : {}),
+      motionStyle: plan.style,
+      entrance: plan.entrance,
+      textEffect: plan.textEffect,
+      shape: plan.shape,
+      ...(plan.transitionColour ? { transitionColour: plan.transitionColour } : {}),
       enterAt: d.enterAt,
       phrases: d.phrasesLocal.map((p) => ({
         text: p.text,
@@ -129,7 +152,7 @@ export function computeTimeline(
         end: start + p.end,
         words: p.words.map((w) => ({ ...w, start: start + p.start + w.start, end: start + p.start + w.end })),
       })),
-      text: d.text.map((t) => ({ ...t, visibleUntil: duration - xfOut })),
+      text: d.text.map(({ appearAt: _a, ...t }) => ({ ...t, visibleUntil: duration - coverOut(i) })),
       limitedBy: d.limitedBy,
     };
     start = start + duration - xfOut;
@@ -145,6 +168,7 @@ export function computeTimeline(
       }
     }
   }
+  if (assigned?.errors.length) throw new TimingError(assigned.errors.map((e) => e.message).join(" "));
 
   const captions = buildCaptions(scenes.flatMap((s) => s.phrases), duration, opts.captionFits);
   return {

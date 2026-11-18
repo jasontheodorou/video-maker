@@ -4,10 +4,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { JOBS_DIR } from "../engine/paths";
+import crypto from "node:crypto";
 import { makeVideo, validateSpec, loadBrand, PipelineError, FORMAT_IDS, type FormatId, type ProgressEvent } from "../engine";
 import { makeDecision, SizeError } from "../engine/size";
-import { readSpec, sceneId } from "../engine/spec";
-import { textFitCheck } from "../engine/lint";
+import { readSpec, sceneId, parseSpec, LookSchema, type Look } from "../engine/spec";
+import { textFitCheck, motionCheck } from "../engine/lint";
+import { getScene } from "../engine/scenes";
+import { compileStill, writePage } from "../engine/compile";
+import { getFormat, SIZE_IDS, type SizeId } from "../engine/config";
+import { TimelineSchema } from "../engine/schema";
 import { interpretBrief, InterpretError, type MediaItem } from "../engine/interpret";
 import { HttpError } from "./http";
 
@@ -32,7 +37,12 @@ export interface JobRecord {
   state: "queued" | "running" | "done" | "error" | "stopped";
   /** Stop has been pressed; the job stops at its next safe point (a few seconds at most). */
   stopping?: boolean;
-  mode: "full" | "rerender";
+  /** full: brief to video. rerender: from an edited script (voice for changed lines). relook: scheme or motion only (voice and alignment kept). */
+  mode: "full" | "rerender" | "relook";
+  /** Length asked for on the Make page (auto when left out). */
+  size?: SizeId | "auto";
+  /** Look chosen on the Make page: one scheme or spread, and the motion style. */
+  look?: Look;
   stage: Stage | null;
   stagesDone: Stage[];
   progress: number;
@@ -180,7 +190,7 @@ export class JobQueue {
   }
 
   /** Create a job folder for a new brief. Media files are saved into media/. */
-  create(input: { brief: string; brand: string; voice?: string; formats: FormatId[]; media: Array<{ name: string; data: Buffer; description?: string }> }): JobRecord {
+  create(input: { brief: string; brand: string; voice?: string; formats: FormatId[]; size?: string; look?: unknown; media: Array<{ name: string; data: Buffer; description?: string }> }): JobRecord {
     const brief = input.brief.trim();
     if (brief.length < 10) throw new HttpError(400, "Write a brief of at least a sentence: what the video is about, who it is for, and what they should do.");
     if (brief.length > 20000) throw new HttpError(400, "The brief must be 20,000 characters or fewer.");
@@ -193,6 +203,15 @@ export class JobQueue {
     if (!brandOk) throw new HttpError(400, "This brand has problems that stop videos being made. Fix them on the Brands page first.");
     const formats = input.formats.filter((f) => (FORMAT_IDS as readonly string[]).includes(f));
     if (!formats.length) throw new HttpError(400, "Choose at least one format.");
+    const size = input.size && input.size !== "auto" ? input.size : "auto";
+    if (size !== "auto" && !(SIZE_IDS as readonly string[]).includes(size)) throw new HttpError(400, "Choose a length: Auto, Short, Medium or Long.");
+    let look: Look | undefined;
+    if (input.look != null && input.look !== "") {
+      const parsed = LookSchema.safeParse(typeof input.look === "string" ? safeJson(input.look) : input.look);
+      if (!parsed.success) throw new HttpError(400, "The look settings are not valid.");
+      look = parsed.data;
+      if (look.scheme && !loadBrand(input.brand).usableSchemes().some((s) => s.id === look!.scheme)) throw new HttpError(400, "That scheme is not in use in this brand.");
+    }
     const d = new Date();
     const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
     const words = brief.split(/\s+/).slice(0, 6).join(" ");
@@ -224,6 +243,8 @@ export class JobQueue {
       brand: input.brand,
       voice: input.voice || undefined,
       formats,
+      ...(size !== "auto" ? { size: size as SizeId } : {}),
+      ...(look ? { look } : {}),
       createdAt: now(),
       updatedAt: now(),
       state: "queued",
@@ -242,16 +263,33 @@ export class JobQueue {
     return rec;
   }
 
-  /** Save an edited spec and make the video again from it, without reading the brief again. */
-  async rerender(id: string, rawSpec: unknown): Promise<JobRecord> {
+  /**
+   * Save an edited spec and make the video again from it, without reading the brief again. When only the look
+   * changed (each scene's scheme and motion, the video's look, the title), the voice and its timing are kept and the
+   * video is remade from the timing step ("relook"). Otherwise unchanged lines keep their recorded voice ("rerender").
+   */
+  async rerender(id: string, rawSpec: unknown): Promise<JobRecord & { remake: "look" | "words" }> {
     const dir = jobDir(id);
     const r = this.get(id);
     if (r.state === "queued" || r.state === "running") throw new HttpError(409, "This video is still being made. Wait for it to finish or stop it first.");
-    const v = validateSpec(rawSpec);
-    if (!v.ok)
+    const v0 = validateSpec(rawSpec);
+    if (!v0.ok)
       throw new HttpError(400, "The script has problems. Fix them and try again.", {
-        problems: v.issues.map((i) => `${describePath(i.path, rawSpec)}${plainMessage(i.message)}`),
-        fields: v.issues.map((i) => fieldOf(i.path, plainMessage(i.message))).filter(Boolean),
+        problems: v0.issues.map((i) => `${describePath(i.path, rawSpec)}${plainMessage(i.message)}`),
+        fields: v0.issues.map((i) => fieldOf(i.path, plainMessage(i.message))).filter(Boolean),
+      });
+    let brand;
+    try {
+      brand = loadBrand(v0.spec.brand);
+    } catch {
+      throw new HttpError(400, `There is no brand called ${v0.spec.brand}.`);
+    }
+    if (!brand.ok) throw new HttpError(400, "This brand has problems that stop videos being made. Fix them on the Brands page first.");
+    const v = validateSpec(rawSpec, brand);
+    if (!v.ok)
+      throw new HttpError(400, "Some look choices can't be used. Change them and try again.", {
+        problems: v.issues.map((i) => i.message),
+        fields: v.issues.map((i) => fieldOf(i.path, i.message)).filter(Boolean),
       });
     try {
       makeDecision(v.spec);
@@ -259,49 +297,64 @@ export class JobQueue {
       if (e instanceof SizeError) throw new HttpError(400, e.message, { problems: [e.message] });
       throw e;
     }
+    // Look only? Compare the specs without the look parts.
+    let previous: unknown = null;
     try {
-      if (!loadBrand(v.spec.brand).ok) throw new HttpError(400, "This brand has problems that stop videos being made. Fix them on the Brands page first.");
-    } catch (e) {
-      if (e instanceof HttpError) throw e;
-      throw new HttpError(400, `There is no brand called ${v.spec.brand}.`);
+      previous = JSON.parse(fs.readFileSync(path.join(dir, "spec.json"), "utf8"));
+    } catch {
+      /* no earlier script */
     }
-    // Measure the text with the real fonts now, so the person hears about text that does not fit in seconds,
-    // next to the box to shorten, instead of after the voice is recorded.
+    const lookOnly =
+      previous != null &&
+      fs.existsSync(path.join(dir, "audio", "alignment.json")) &&
+      fs.existsSync(path.join(dir, "decision.json")) &&
+      (() => {
+        try {
+          return JSON.stringify(withoutLook(parseSpec(previous))) === JSON.stringify(withoutLook(v.spec));
+        } catch {
+          return false;
+        }
+      })();
     const formats = ((v.spec.formats as FormatId[] | undefined) ?? r.formats) as FormatId[];
-    const fit = (await textFitCheck(v.spec, loadBrand(v.spec.brand), null, formats, path.join(dir, "review", "fit"))).filter((f) => f.level === "error");
-    if (fit.length) {
-      const index = (sid?: string) => v.spec.scenes.findIndex((sc, i) => sceneId(sc, i) === sid);
-      throw new HttpError(400, "Some text does not fit. Shorten the parts shown and try again.", {
-        problems: [...new Set(fit.map((f) => f.message))],
-        // A problem with the scene as a whole ("too tall together") is shown at its longest text part.
-        fields: fit
-          .filter((f) => index(f.scene) >= 0)
-          .map((f) => {
-            const sc = v.spec.scenes[index(f.scene)];
-            const longest = Object.entries(sc.slots as Record<string, unknown>)
-              .filter(([, x]) => typeof x === "string")
-              .sort((a, b) => String(b[1]).length - String(a[1]).length)[0]?.[0];
-            return { scene: index(f.scene), slot: f.slot ?? longest, message: f.message };
-          })
-          .filter((f) => f.slot),
-      });
+    if (!lookOnly) {
+      // Measure the text with the real fonts now, so the person hears about text that does not fit in seconds,
+      // next to the box to shorten, instead of after the voice is recorded.
+      const fit = (await textFitCheck(v.spec, brand, null, formats, path.join(dir, "review", "fit"))).filter((f) => f.level === "error");
+      if (fit.length) {
+        const index = (sid?: string) => v.spec.scenes.findIndex((sc, i) => sceneId(sc, i) === sid);
+        throw new HttpError(400, "Some text does not fit. Shorten the parts shown and try again.", {
+          problems: [...new Set(fit.map((f) => f.message))],
+          // A problem with the scene as a whole ("too tall together") is shown at its longest text part.
+          fields: fit
+            .filter((f) => index(f.scene) >= 0)
+            .map((f) => {
+              const sc = v.spec.scenes[index(f.scene)];
+              const longest = Object.entries(sc.slots as Record<string, unknown>)
+                .filter(([, x]) => typeof x === "string")
+                .sort((a, b) => String(b[1]).length - String(a[1]).length)[0]?.[0];
+              return { scene: index(f.scene), slot: f.slot ?? longest, message: f.message };
+            })
+            .filter((f) => f.slot),
+        });
+      }
     }
     fs.writeFileSync(path.join(dir, "spec.json"), JSON.stringify(rawSpec, null, 2) + "\n");
     const rec: JobRecord = this.records.get(id) ?? { ...r, fromApp: true };
     rec.title = v.spec.title;
     rec.brand = v.spec.brand;
     rec.formats = (v.spec.formats as FormatId[] | undefined) ?? rec.formats;
+    rec.look = v.spec.look ?? rec.look;
     rec.state = "queued";
-    rec.mode = "rerender";
+    rec.mode = lookOnly ? "relook" : "rerender";
     rec.stage = null;
-    rec.stagesDone = ["understand", "write"];
+    rec.stagesDone = lookOnly ? ["understand", "write", "voice"] : ["understand", "write"];
     rec.progress = 0;
-    rec.message = "Waiting to start";
+    rec.message = lookOnly ? "Remaking the look. Voice and timing are kept." : "Waiting to start";
     rec.error = undefined;
     this.records.set(id, rec);
     writeRecord(rec);
     this.enqueue(id);
-    return rec;
+    return { ...rec, remake: lookOnly ? "look" : "words" };
   }
 
   /** Run a stopped or failed job again from the start. */
@@ -314,10 +367,12 @@ export class JobQueue {
     const r: JobRecord = this.records.get(id) ?? { ...found, stagesDone: hasSpec ? ["understand", "write"] : [] };
     this.records.set(id, r);
     r.state = "queued";
-    // Reuse the script if it was already written; read the brief again only if it was not.
-    r.mode = hasSpec && r.stagesDone.includes("write") ? "rerender" : "full";
+    // Reuse the script if it was already written; read the brief again only if it was not. A look-only remake stays
+    // one while its voice files are there.
+    const canRelook = r.mode === "relook" && fs.existsSync(path.join(jobDir(id), "audio", "alignment.json"));
+    r.mode = canRelook ? "relook" : hasSpec && r.stagesDone.includes("write") ? "rerender" : "full";
     r.stage = null;
-    r.stagesDone = r.mode === "rerender" ? ["understand", "write"] : [];
+    r.stagesDone = r.mode === "relook" ? ["understand", "write", "voice"] : r.mode === "rerender" ? ["understand", "write"] : [];
     r.progress = 0;
     r.message = "Waiting to start";
     r.error = undefined;
@@ -450,6 +505,8 @@ export class JobQueue {
           voice: rec.voice,
           formats: rec.formats,
           media: rec.media,
+          requestedSize: rec.size && rec.size !== "auto" ? rec.size : undefined,
+          look: rec.look,
           signal,
           workDir: path.join(dir, "review", "interpret"),
           onProgress: (e) => {
@@ -477,8 +534,9 @@ export class JobQueue {
         });
       }
       if (signal.aborted) throw new PipelineError("size", "Stopped.");
-      await makeVideo(dir, { formats: rec.formats, signal }, (e: ProgressEvent) => {
-        const stage = STAGE_OF[e.step] ?? rec.stage;
+      const relook = rec.mode === "relook";
+      await makeVideo(dir, { formats: rec.formats, signal, ...(relook ? { from: "timing" as const } : {}) }, (e: ProgressEvent) => {
+        const stage = relook && e.step === "timing" ? "layout" : (STAGE_OF[e.step] ?? rec.stage);
         if (e.status === "done" && e.step === "timing") markDone("voice");
         if (e.status === "done" && e.step === "sheet") markDone("layout");
         if (e.status === "done" && e.step === "render") markDone("render");
@@ -505,6 +563,26 @@ export class JobQueue {
       });
     }
   }
+}
+
+function safeJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+/** A spec without its look: each scene's scheme and motion, the video's look and title. */
+function withoutLook(spec: unknown): unknown {
+  if (!spec || typeof spec !== "object") return spec;
+  const { look: _l, title: _t, ...rest } = spec as Record<string, unknown>;
+  const scenes = Array.isArray(rest.scenes) ? rest.scenes.map((sc) => {
+    if (!sc || typeof sc !== "object") return sc;
+    const { scheme: _s, motion: _m, ...r } = sc as Record<string, unknown>;
+    return r;
+  }) : rest.scenes;
+  return { ...rest, scenes };
 }
 
 /** Plain names for the parts of a scene, matching the script editor's labels. */
@@ -544,6 +622,8 @@ function plainMessage(m: string): string {
 
 /** The editor field a schema problem belongs to: { scene, slot, item? }. */
 function fieldOf(p: string, message: string): { scene: number; slot: string; item?: number; message: string } | null {
+  const look = p.match(/^scenes\.(\d+)\.(scheme|motion\.(?:entrance|transition|text|shape))$/);
+  if (look) return { scene: Number(look[1]), slot: look[2], message };
   const m = p.match(/^scenes\.(\d+)\.slots\.([a-z]+)(?:\.(\d+))?/);
   if (!m) return null;
   return { scene: Number(m[1]), slot: m[2], item: m[3] != null ? Number(m[3]) : undefined, message };
@@ -614,6 +694,8 @@ export function jobView(q: JobQueue, id: string) {
   const sheetFresh = fs.existsSync(sheetFile) && (!busy || r.stagesDone.includes("layout"));
   return {
     job: r,
+    look: { schemes: (spec as { look?: Look } | null)?.look?.schemes ?? r.look?.schemes ?? null, scheme: (spec as { look?: Look } | null)?.look?.scheme ?? r.look?.scheme ?? null, motionStyle: (spec as { look?: Look } | null)?.look?.motionStyle ?? r.look?.motionStyle ?? null },
+    plan: busy && !r.stagesDone.includes("voice") ? null : planOf(dir, base, spec),
     queuePosition: q.queuePosition(id),
     stages: STAGES,
     decision,
@@ -623,4 +705,111 @@ export function jobView(q: JobQueue, id: string) {
     srt: busy ? null : srt,
     sheet: sheetFresh ? `${base}/review/contact-sheet.png?t=${Math.round(fs.statSync(sheetFile).mtimeMs)}` : null,
   };
+}
+
+/** The scenes as made: times, scheme, transition, motion and stills. Null until timeline.json exists. */
+function planOf(dir: string, base: string, spec: unknown) {
+  const raw = readJsonFile<unknown>(path.join(dir, "timeline.json"));
+  if (!raw || !spec) return null;
+  const t = TimelineSchema.safeParse(raw);
+  if (!t.success) return null;
+  const sp = spec as { brand?: string; scenes?: Array<{ type: string; beat?: string }> };
+  let brand: ReturnType<typeof loadBrand> | null = null;
+  try {
+    brand = loadBrand(sp.brand ?? "demo");
+  } catch {
+    brand = null;
+  }
+  const stillsFor = (sid: string, i: number) =>
+    Object.fromEntries(
+      FORMAT_IDS.map((f) => {
+        const file = path.join(dir, "review", "stills", f, `${String(i + 1).padStart(2, "0")}-${sid}.png`);
+        return [f, fs.existsSync(file) ? `${base}/review/stills/${f}/${path.basename(file)}?t=${Math.round(fs.statSync(file).mtimeMs)}` : null];
+      }),
+    );
+  const scenes = t.data.scenes.map((s, i) => {
+    let label = s.type;
+    try {
+      label = getScene(s.type).label;
+    } catch {
+      /* unknown type */
+    }
+    return {
+      index: i,
+      id: s.id,
+      type: s.type,
+      label,
+      beat: sp.scenes?.[i]?.beat ?? null,
+      start: s.start,
+      duration: s.duration,
+      scheme: s.scheme ?? null,
+      schemeAuto: s.schemeAuto ?? true,
+      transitionIn: s.transitionIn,
+      transitionSeconds: s.transitionSeconds ?? 0,
+      motion: { style: s.motionStyle ?? "calm", entrance: s.entrance ?? "rise", text: s.textEffect ?? "none", shape: s.shape ?? "none" },
+      stills: stillsFor(s.id, i),
+      problems: [] as string[],
+    };
+  });
+  const schemes = brand
+    ? brand.schemes().map((s) => ({ id: s.id, name: s.name, usable: s.usable, bookends: s.bookends, tone: s.tone, vars: s.vars }))
+    : [];
+  return { scenes, schemes };
+}
+
+/** A still of one scene of a job in a given scheme, for the Look tab. Served from /previews/. */
+export function scenePreview(id: string, body: { scene?: unknown; scheme?: unknown; format?: unknown; spec?: unknown }, previewRoot: string) {
+  const dir = jobDir(id);
+  let spec;
+  try {
+    spec = body.spec ? parseSpec(body.spec) : readSpec(path.join(dir, "spec.json"));
+  } catch (e) {
+    throw new HttpError(400, `The script is not valid: ${(e as Error).message.split("\n")[0]}`);
+  }
+  const index = typeof body.scene === "number" ? body.scene : spec.scenes.findIndex((s, i) => sceneId(s, i) === body.scene);
+  const sc = spec.scenes[index];
+  if (!sc) throw new HttpError(400, "There is no such scene.");
+  const format = (FORMAT_IDS as readonly string[]).includes(String(body.format)) ? (body.format as FormatId) : "16x9";
+  const brand = loadBrand(spec.brand);
+  const scheme = typeof body.scheme === "string" && body.scheme ? body.scheme : undefined;
+  if (scheme && !brand.scheme(scheme)) throw new HttpError(400, `There is no scheme called "${scheme}".`);
+  const sid = sceneId(sc, index);
+  const page = compileStill({ type: sc.type, slots: sc.slots as Record<string, unknown>, id: sid }, brand, format, { scheme });
+  const hash = crypto.createHash("sha1").update(page.html).digest("hex").slice(0, 12);
+  const name = `job.${id}.${hash}`;
+  const file = `${sid}-${format}.html`;
+  if (!fs.existsSync(path.join(previewRoot, name, file))) writePage(page, path.join(previewRoot, name), file);
+  // Keep the newest 30 scene previews of this job.
+  try {
+    const old = fs
+      .readdirSync(previewRoot)
+      .filter((d) => d.startsWith(`job.${id}.`) && d !== name)
+      .map((d) => ({ d, t: fs.statSync(path.join(previewRoot, d)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)
+      .slice(30);
+    for (const o of old) fs.rmSync(path.join(previewRoot, o.d), { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+  const fmt = getFormat(format);
+  return { url: `/previews/${name}/${file}`, width: fmt.width, height: fmt.height, scheme: /data-scheme="([^"]*)"/.exec(page.html)?.[1] ?? null, issues: page.issues.map((i) => i.message) };
+}
+
+/** Problems with a spec's look choices (schemes and motion), before remaking. Scene numbers are 0-based indexes. */
+export function lookCheck(id: string, body: { spec?: unknown }) {
+  jobDir(id);
+  const v0 = validateSpec(body.spec);
+  if (!v0.ok) return { problems: v0.issues.map((i) => ({ scene: Number(/^scenes\.(\d+)/.exec(i.path)?.[1] ?? -1), field: i.path.replace(/^scenes\.\d+\./, ""), message: plainMessage(i.message) })) };
+  let brand;
+  try {
+    brand = loadBrand(v0.spec.brand);
+  } catch {
+    throw new HttpError(400, `There is no brand called ${v0.spec.brand}.`);
+  }
+  const problems: Array<{ scene: number; field: string; message: string }> = [];
+  const v = validateSpec(body.spec, brand);
+  if (!v.ok) for (const i of v.issues) problems.push({ scene: Number(/^scenes\.(\d+)/.exec(i.path)?.[1] ?? -1), field: i.path.replace(/^scenes\.\d+\./, ""), message: i.message });
+  // Rules that need scene lengths use the current timeline when the script's words have not changed.
+  for (const f of motionCheck(v0.spec, null, brand)) if (f.level === "error" && !problems.some((p) => p.message === f.message)) problems.push({ scene: f.sceneIndex ?? -1, field: f.field ?? "motion", message: f.message });
+  return { problems };
 }

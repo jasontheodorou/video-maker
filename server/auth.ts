@@ -196,8 +196,19 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
-/** A plain one-column page in the sign-in style, used by the sign-in, setup and settings pages. */
-export function pageShell(title: string, body: string, focusId?: string): string {
+/**
+ * A server page in the studio's look ("Daylight Studio"): top bar, light grey app background, one white panel.
+ * `nav` shows the workspace links (signed-in pages only). Markup and CSS only: no behaviour lives here.
+ */
+export function pageShell(title: string, body: string, focusId?: string, opts: { nav?: "settings" } = {}): string {
+  const nav = opts.nav
+    ? `<nav class="tabs" aria-label="Main"><ul>
+      <li><a href="/make">Make</a></li>
+      <li><a href="/videos">Videos</a></li>
+      <li><a href="/brands">Brands</a></li>
+      <li><a href="/settings" aria-current="page">Settings</a></li>
+    </ul></nav>`
+    : "";
   return `<!doctype html>
 <html lang="en-GB">
 <head>
@@ -205,39 +216,54 @@ export function pageShell(title: string, body: string, focusId?: string): string
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} - Video maker</title>
 <style>
-  :root { color-scheme: light; }
-  body { margin: 0; background: #ffffff; color: #0b0c0c; font: 19px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
-  main { max-width: 640px; margin: 0 auto; padding: 48px 16px; }
-  h1 { font-size: 40px; line-height: 1.2; margin: 0 0 24px; }
-  h2 { font-size: 27px; line-height: 1.25; margin: 48px 0 16px; }
+  :root { color-scheme: light; --app: #e7eaee; --panel: #ffffff; --panel-2: #f3f4f6; --ink: #11161b; --ink-2: #2b3138; --link: #0a4a73; --edge: #5c6670; --rule: #c9ced4; --mark: #e8651a; --ok: #1d5236; --ok-tint: #e6f1e9; --bad: #7a1a1a; --bad-tint: #f9eae7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--app); color: var(--ink); font: 18px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 24px; min-height: 56px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--rule); }
+  .wordmark { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 18px; font-weight: 700; color: var(--ink); text-decoration: none; }
+  .wordmark .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mark); transform: translateY(6px); }
+  .tabs ul { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; margin: 0; padding: 0; }
+  .tabs a { display: inline-flex; align-items: center; min-height: 52px; padding: 0 14px; color: var(--ink); font-size: 17px; font-weight: 600; text-decoration: none; border-bottom: 3px solid transparent; }
+  .tabs a:hover { background: #eef3f7; }
+  .tabs a[aria-current="page"] { font-weight: 700; border-bottom-color: var(--ink); }
+  main { max-width: 640px; margin: 24px auto 48px; padding: 32px; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; }
+  main.narrow { max-width: 480px; margin-top: 64px; }
+  @media (max-width: 680px) { main { margin: 8px; padding: 24px 16px; } main.narrow { margin-top: 24px; } }
+  h1 { font-size: 28px; line-height: 36px; margin: 0 0 24px; }
+  h2 { font-size: 22px; line-height: 30px; margin: 40px 0 12px; padding-top: 24px; border-top: 1px solid var(--rule); }
   p { margin: 0 0 16px; }
-  a { color: #1d4f91; }
-  label { display: block; font-weight: 700; margin-bottom: 8px; }
+  a { color: var(--link); text-underline-offset: 4px; }
+  a:hover { color: var(--ink); text-decoration-thickness: 2px; }
+  label { display: block; font-weight: 700; font-size: 17px; margin-bottom: 6px; }
   .field { margin-bottom: 24px; }
-  .hint { color: #0b0c0c; margin: 0 0 8px; }
-  input[type=password], input[type=text] { box-sizing: border-box; width: 100%; max-width: 480px; font: inherit; padding: 8px; border: 2px solid #0b0c0c; border-radius: 0; }
-  input:focus, button:focus, a:focus { outline: 3px solid #ffdd00; outline-offset: 0; box-shadow: inset 0 0 0 2px #0b0c0c; }
-  .field-error { color: #942514; font-weight: 700; margin: 0 0 8px; }
-  .has-error input { border-color: #942514; }
-  .has-error { border-left: 5px solid #942514; padding-left: 16px; }
-  button { font: inherit; font-weight: 700; color: #ffffff; background: #005a30; border: 0; box-shadow: 0 2px 0 #002d18; padding: 10px 16px; cursor: pointer; }
-  button:hover { background: #003d20; }
-  button.secondary { color: #0b0c0c; background: #e5e6e7; box-shadow: 0 2px 0 #6f7072; }
-  button.secondary:hover { background: #cfd0d2; }
-  .error-summary { border: 5px solid #942514; padding: 16px; margin-bottom: 32px; }
-  .error-summary:focus, .notice:focus { outline: 3px solid #ffdd00; outline-offset: 0; }
-  .error-summary h2 { margin: 0 0 8px; font-size: 24px; }
-  .error-summary a { color: #942514; font-weight: 700; }
-  .notice { border: 5px solid #005a30; padding: 16px; margin-bottom: 32px; }
-  .notice h2 { margin: 0 0 8px; font-size: 24px; }
+  .hint { color: var(--ink-2); font-size: 16px; margin: 0 0 8px; }
+  input[type=password], input[type=text] { width: 100%; max-width: 480px; min-height: 44px; font: inherit; padding: 8px 12px; color: var(--ink); background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; }
+  input:focus-visible, button:focus-visible, a:focus-visible, input:focus, button:focus { outline: 3px solid var(--ink); outline-offset: 2px; box-shadow: 0 0 0 2px #ffffff; }
+  .field-error { color: var(--bad); font-weight: 700; margin: 0 0 8px; }
+  .has-error input { border: 2px solid var(--bad); }
+  .has-error { border-left: 4px solid var(--bad); padding-left: 16px; }
+  button { font: inherit; font-weight: 700; color: #ffffff; background: var(--ink); border: 1px solid var(--ink); border-radius: 6px; min-height: 44px; padding: 8px 18px; cursor: pointer; }
+  button:hover { background: #2b3138; }
+  button.secondary { color: var(--ink); background: var(--panel); border-color: var(--edge); }
+  button.secondary:hover { background: #eef3f7; }
+  .error-summary { border: 2px solid var(--bad); background: var(--bad-tint); border-radius: 10px; padding: 16px 20px; margin-bottom: 32px; }
+  .error-summary:focus, .notice:focus { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .error-summary h2, .notice h2 { margin: 0 0 8px; padding: 0; border: 0; font-size: 20px; }
+  .error-summary a { color: var(--bad); font-weight: 700; }
+  .notice { border: 2px solid var(--ok); background: var(--ok-tint); border-radius: 10px; padding: 16px 20px; margin-bottom: 32px; }
+  .notice, .notice h2, .notice p { color: var(--ink); }
   .status { font-weight: 700; }
-  .link-box { font-size: 24px; font-weight: 700; word-break: break-all; padding: 16px; background: #f3f2f1; border-left: 5px solid #1d4f91; margin-bottom: 16px; }
+  .link-box { font-size: 22px; font-weight: 700; word-break: break-all; padding: 16px; background: var(--panel-2); border-left: 4px solid var(--link); border-radius: 6px; margin-bottom: 16px; }
   .back { display: inline-block; margin-bottom: 32px; }
   .visually-hidden { position: absolute; left: -9999px; }
 </style>
 </head>
 <body>
-<main>
+<header class="topbar">
+  <a class="wordmark" href="${opts.nav ? "/make" : "/"}">Video maker<span class="dot" aria-hidden="true"></span></a>
+  ${nav}
+</header>
+<main${opts.nav ? "" : ' class="narrow"'}>
 ${body}
 </main>
 ${focusId ? `<script>document.getElementById(${JSON.stringify(focusId)}).focus();</script>` : ""}

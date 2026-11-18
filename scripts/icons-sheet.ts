@@ -42,7 +42,10 @@ export function pickSheetIcons(brandId: string, topics = SHEET_TOPICS): Array<{ 
 
 function sheetHtml(b: LoadedBrand, scheme: "light" | "dark", icons: Array<{ topic: string; name: string }>, weightFor: (row: number) => IconWeight): string {
   const fmt = getFormat("16x9");
-  const surf = b.brand.surfaces[scheme];
+  // The first usable scheme of that tone (light or dark), drawn with its own colours.
+  const st = b.usableSchemes().find((x) => x.tone === scheme) ?? b.usableSchemes()[0];
+  const sc = b.scheme(st.id)!;
+  const surf = { text: sc.text, accent: sc.highlight };
   const css = brandCss(b, fmt, (rel) => "file://" + path.join(b.dir, rel));
   const rows: string[] = [];
   for (let r = 0; r < 6; r++) {
@@ -57,7 +60,7 @@ function sheetHtml(b: LoadedBrand, scheme: "light" | "dark", icons: Array<{ topi
 ${css}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1920px;height:1080px;overflow:hidden}
-body{background:var(--${scheme}-bg);color:var(--${scheme}-text);font-family:var(--font-body);padding:56px 72px}
+body{background:${st.vars["--bg"]};color:${st.vars["--fg"]};font-family:var(--font-body);padding:56px 72px}
 h1{font-family:var(--font-heading);font-weight:var(--weight-heading);font-size:34px;line-height:1.2;margin-bottom:28px}
 h1 small{font-family:var(--font-body);font-weight:var(--weight-body);font-size:22px;margin-left:16px}
 .row{display:flex;align-items:flex-start;height:150px}

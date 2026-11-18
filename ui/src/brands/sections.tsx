@@ -89,7 +89,9 @@ export function LogoSection() {
   const unused = logos.filter((l) => l !== draft.logo.onLight && l !== draft.logo.onDark);
 
   const box = (key: "onLight" | "onDark", label: string, surface: "light" | "dark") => {
-    const bg = draft.colours?.[draft.surfaces?.[surface]?.background]?.value ?? (surface === "dark" ? "#0B0C0C" : "#FFFFFF");
+    // Show the logo on the first scheme of that tone.
+    const sch = (check as any)?.schemes?.find((x: any) => x.tone === surface && x.vars);
+    const bg = sch?.vars?.["--bg"] ?? (surface === "dark" ? "#0B0C0C" : "#FFFFFF");
     const src = draft.logo[key];
     // Logo problems shown next to the logo itself, with the white-version button when it would help.
     const found = (check?.issues ?? []).filter((i) => i.field === `logo.${key}` && !/^PNG logos/.test(i.message));
@@ -100,7 +102,7 @@ export function LogoSection() {
         </div>
         <div className="logo-box__body">
           <h3 className="h4">{label}</h3>
-          <p className="hint">{key === "onDark" ? "Used on title and end cards." : "Not used in videos yet."}</p>
+          <p className="hint">{key === "onDark" ? "Used on dark schemes." : "Used on light schemes."}</p>
           <div id={`logo-${key}-warn`}>
             {found.map((i, k) => (
               <div className="logo-warn" key={k}>

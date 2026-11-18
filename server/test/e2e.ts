@@ -74,7 +74,11 @@ async function brandsFlow(page: Page) {
   await page.getByRole("button", { name: "Create brand" }).click();
   await page.getByRole("heading", { name: `Edit ${name}`, level: 1 }).waitFor();
   check(true, "a new brand can be created and opens in the editor");
-  const id = new URL(page.url()).searchParams.get("brand")!;
+  const id = decodeURIComponent(new URL(page.url()).pathname.split("/")[2]);
+  const area = async (label: string) => {
+    await page.getByRole("navigation", { name: "Brand areas" }).getByRole("link", { name: label, exact: true }).click();
+    await page.waitForTimeout(300);
+  };
 
   // Live preview: nine stills (three scenes, three formats).
   await page.locator("#preview iframe").nth(8).waitFor({ timeout: 20000 });
@@ -83,6 +87,8 @@ async function brandsFlow(page: Page) {
   await snap(page, "brand-editor");
 
   // Contrast: make the accent fail on the dark background, then use the suggested colour.
+  await area("Colours");
+  await page.locator('[data-colour="accent"]').click();
   const accent = page.locator("#c-accent-hex");
   await accent.fill("#6A8CA6");
   await page.getByText("Fails AAA").first().waitFor({ timeout: 5000 });
@@ -90,12 +96,17 @@ async function brandsFlow(page: Page) {
   await page.locator("#sec-colours").scrollIntoViewIfNeeded();
   await snap(page, "contrast-fail");
   const fix = page.getByRole("button", { name: /^Change .* to #/ }).first();
+  await fix.waitFor({ timeout: 5000 }).catch(() => undefined);
   check(await fix.isVisible(), "a passing colour is suggested");
-  await fix.click();
-  await page.waitForTimeout(600);
+  // Each fix mends one scheme; use them until none are left.
+  for (let i = 0; i < 6 && (await page.getByRole("button", { name: /^Change .* to #/ }).count()); i++) {
+    await page.getByRole("button", { name: /^Change .* to #/ }).first().click();
+    await page.waitForTimeout(900);
+  }
   check((await page.getByText("Fails AAA").count()) === 0, "using the suggestion makes every pair pass");
 
   // Rename and save.
+  await area("Overview");
   await page.locator("#f-name").fill(`${name} renamed`);
   await page.getByRole("button", { name: "Save brand" }).first().click();
   await page.getByText(/^Saved/).first().waitFor({ timeout: 10000 });
@@ -104,6 +115,7 @@ async function brandsFlow(page: Page) {
   check(saved.name === `${name} renamed`, "brand.json has the new name");
 
   // Upload an icon.
+  await area("Icons and graphics");
   const iconFile = path.join(SHOTS, "e2e-star.svg");
   fs.writeFileSync(iconFile, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg>');
   await page.locator("#icon-upload").setInputFiles(iconFile);
@@ -113,6 +125,7 @@ async function brandsFlow(page: Page) {
   fs.rmSync(iconFile, { force: true });
 
   // Logo upload (SVG) for dark backgrounds.
+  await area("Logo");
   const logoFile = path.join(SHOTS, "e2e-logo.svg");
   fs.writeFileSync(logoFile, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60"><rect width="60" height="60" fill="#FFFFFF"/><text x="70" y="40" fill="#FFFFFF" font-size="28">Test</text></svg>');
   await page.locator("#logo-upload").setInputFiles(logoFile);
@@ -123,6 +136,7 @@ async function brandsFlow(page: Page) {
   fs.rmSync(logoFile, { force: true });
 
   // Guidelines file: read it, then use the suggestions.
+  await area("Guidelines");
   const guide = path.join(SHOTS, "e2e-guidelines.md");
   fs.writeFileSync(guide, "# Riverside Council brand guidelines\n\n## Colour\n\n| Name | Hex |\n| --- | --- |\n| River Teal (primary colour) | #004D4F |\n| Ink (text colour) | #101010 |\n| White (background colour) | #FFFFFF |\n| Sun (accent colour) | #FFC845 |\n| Foam (tint) | #E8F3F2 |\n\n## Tone of voice\n\nFriendly, plain and direct. Short sentences. Say what people need to do.\n\n## Do and don't\n\n- Do use plain English.\n- Don't use jargon.\n");
   await page.locator("#guidelines-file").setInputFiles(guide);
@@ -131,11 +145,13 @@ async function brandsFlow(page: Page) {
   await snap(page, "guideline-suggestions");
   check(await page.locator("#suggestions").getByText("#004D4F", { exact: true }).isVisible(), "colours are suggested from the guidelines");
   await page.getByRole("button", { name: "Use the chosen suggestions" }).click();
-  await page.waitForTimeout(800);
+  await page.locator("#sec-colours-h").waitFor();
+  await page.locator('[data-colour="primary"]').click();
   check((await page.locator("#c-primary-hex").inputValue()) === "#004D4F", "a chosen suggestion fills the form");
   fs.rmSync(guide, { force: true });
 
   // Delete, with confirmation.
+  await area("Overview");
   await page.getByRole("button", { name: "Delete brand" }).last().click();
   // The question is asked in the page, GOV.UK style, not in a dialog.
   await page.getByRole("group", { name: /^Delete / }).waitFor();
@@ -196,7 +212,11 @@ async function makeFlow(page: Page) {
   }
   const bar = await page.locator('[role="progressbar"]').getAttribute("aria-valuenow");
   check(bar === "100", "the progress bar reaches 100%");
+  // Length and Files are folded groups in the inspector's Video tab.
+  await page.getByRole("tab", { name: /^Video/ }).click();
+  await page.locator("#video-length .group__toggle").click();
   check(await page.getByText("Why this length:").isVisible(), "the chosen length and the reasons are shown");
+  await page.locator("#video-files .group__toggle").click();
   check(await page.locator(".sheet img").isVisible(), "the contact sheet is shown");
   await snap(page, "job-done");
   await resultsFlow(page);
@@ -255,13 +275,15 @@ async function resultsFlow(page: Page) {
 
   if (args.has("--rerender")) {
     console.log("\nEdit the script and make it again");
-    await page.getByRole("button", { name: "Show the script" }).click();
+    // Select scene 1 in the strip: its words open in the inspector's Scene tab.
+    await page.locator("#clip-0").click();
+    await page.getByRole("tab", { name: "Scene" }).click();
     const first = page.locator('textarea[data-vo]').first();
     await first.scrollIntoViewIfNeeded();
     const before = await first.inputValue();
     await first.fill(before.replace(/\.$/, "") + ", every week.");
     await snap(page, "script-edited");
-    await page.getByRole("button", { name: "Save script and make the video again" }).click();
+    await page.getByRole("button", { name: "Remake" }).click();
     const t0 = Date.now();
     await page.locator("#job-head .tag", { hasText: "In progress" }).waitFor({ timeout: 15000 }).catch(() => {});
     let st = "";

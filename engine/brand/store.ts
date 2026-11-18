@@ -4,8 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { BRANDS_DIR } from "../paths";
-import { BrandSchema, ICON_WEIGHTS, type Brand, type IconWeight } from "../schema";
-import { inspectBrand, type BrandIssue, type ContrastPair } from "../brand";
+import { ICON_WEIGHTS, type Brand, type IconWeight } from "../schema";
+import { inspectBrand, safeParseBrand, emphasisWeightAvailable, type BrandIssue, type ContrastPair, type SchemeStatus } from "../brand";
+import { migrateBrand, isV1, STANDARD_GROUPS } from "./migrate";
+import { recommendSchemes } from "./recommend";
+import { contrastRatio, luminance, isHex, WHITE, ENGINE_BLACK } from "../colour-core";
 import { canonicalIconName } from "../icons/library";
 import { inspectFontFile, installOpenFont, textToPath, FONT_EXTENSIONS, type FontFileInfo } from "./fonts";
 import { inspectImage, sanitiseUploadedSvg, prepareIconSvg, logoWarnings, svgColours } from "./assets";
@@ -21,6 +24,8 @@ export interface BrandCheck {
   brand?: Brand;
   issues: BrandIssue[];
   contrast: ContrastPair[];
+  /** Each scheme: usable, can open and close videos, tone and CSS values. */
+  schemes?: SchemeStatus[];
 }
 
 export interface BrandFiles {
@@ -34,8 +39,10 @@ export interface BrandFiles {
 export interface BrandRecord {
   id: string;
   dir: string;
-  /** brand.json as stored. */
+  /** brand.json, always as version 2 (a version 1 file is migrated in memory; the next save writes version 2). */
   raw: Record<string, unknown>;
+  /** True when the file on disk is still version 1. */
+  migrated?: boolean;
   check: BrandCheck;
   files: BrandFiles;
 }
@@ -76,22 +83,28 @@ export function brandIdFromName(name: string): string {
 
 /** Check brand JSON against a folder of files without saving. Never throws. Same checks as rendering. */
 export function checkBrand(raw: unknown, dir: string): BrandCheck {
-  const r = BrandSchema.safeParse(raw);
-  if (!r.success) {
-    return { ok: false, issues: r.error.issues.map((i) => ({ level: "error" as const, field: i.path.join("."), message: i.message })), contrast: [] };
+  const r = safeParseBrand(raw);
+  if (!r.success || !r.data) {
+    return { ok: false, issues: r.issues.map((i) => ({ level: "error" as const, field: i.path, message: i.message })), contrast: [] };
   }
   try {
     const b = inspectBrand(r.data, path.resolve(dir));
-    return { ok: b.ok, brand: r.data, issues: b.issues, contrast: b.contrast };
+    return { ok: b.ok, brand: r.data, issues: b.issues, contrast: b.contrast, schemes: b.schemes() };
   } catch (e) {
     return { ok: false, brand: r.data, issues: [{ level: "error", field: "brand", message: (e as Error).message }], contrast: [] };
   }
 }
 
-function readRaw(dir: string): Record<string, unknown> {
+/** brand.json as stored on disk (version 1 or 2). */
+function readStored(dir: string): Record<string, unknown> {
   const file = path.join(dir, "brand.json");
   if (!fs.existsSync(file)) throw new Error(`There is no brand in ${path.relative(BRANDS_DIR, dir) || dir}.`);
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+/** brand.json as version 2: a version 1 file is migrated in memory. */
+function readRaw(dir: string): Record<string, unknown> {
+  return migrateBrand(readStored(dir)).raw;
 }
 
 function writeRaw(dir: string, raw: Record<string, unknown>): void {
@@ -107,8 +120,9 @@ function writeRaw(dir: string, raw: Record<string, unknown>): void {
 /** A brand with its checks and a list of its files. */
 export function readBrand(id: string): BrandRecord {
   const dir = brandFolder(id);
-  const raw = readRaw(dir);
-  return { id, dir, raw, check: checkBrand(raw, dir), files: listBrandFiles(id, raw) };
+  const stored = readStored(dir);
+  const raw = migrateBrand(stored).raw;
+  return { id, dir, raw, migrated: isV1(stored), check: checkBrand(raw, dir), files: listBrandFiles(id, raw) };
 }
 
 /** Every file in a brand folder, grouped, with what uses each one. */
@@ -163,10 +177,12 @@ export interface CreateBrandInput {
   /** Brand to copy fonts and tokens from. Default "demo". Its logo, icons and guidelines are not copied. */
   from?: string;
   /** Colours to start with. Roles are guessed and surfaces chosen so every text pair passes AAA. */
-  colours?: Array<{ value: string; name?: string; role?: string }>;
+  colours?: Array<{ value: string; name?: string; role?: string; group?: string; tintValues?: { t10?: string; t25?: string } }>;
   description?: string;
   /** Start from plain placeholder colours (BLANK_COLOURS) instead of the starting brand's colours. */
   blank?: boolean;
+  /** Colour rules read from the guidelines, naming colours by their names ("navy", "Black"). */
+  colourRules?: { text?: string[]; never?: Array<{ text: string; background: string }>; source?: string };
 }
 
 /** Plain colours for a blank brand. They pass every check, so the preview works before the real colours are in. */
@@ -195,6 +211,8 @@ export function createBrand(input: CreateBrandInput): BrandRecord & { notes: str
   if (fs.existsSync(dir)) throw new Error(`A brand with the id ${id} already exists. Choose another name or id.`);
   const fromDir = brandFolder(input.from ?? "demo");
   const template = readRaw(fromDir) as any;
+  delete template.colours;
+  delete template.surfaces;
   const notes: string[] = [];
   if (input.blank && !input.colours?.length) input = { ...input, colours: BLANK_COLOURS };
 
@@ -221,30 +239,31 @@ export function createBrand(input: CreateBrandInput): BrandRecord & { notes: str
   raw.guidelines = "";
   raw.rules = { do: [], dont: [] };
 
-  // Optional colours the starting brand uses for its own extras (such as a second accent) are not carried
-  // over unless the new brand's surfaces or captions use them.
-  if (!input.colours?.length) {
-    const used = new Set<string>([
-      ...Object.values(raw.surfaces ?? {}).flatMap((x: any) => [x.background, x.text, x.accent]),
-      raw.captions?.background,
-      raw.captions?.text,
-      raw.icons?.duotoneColour,
-    ]);
-    for (const k of ["accent2", "line"]) if (raw.colours?.[k] && !used.has(k)) delete raw.colours[k];
-    if (raw.icons?.duotoneColour && !raw.colours?.[raw.icons.duotoneColour]) delete raw.icons.duotoneColour;
-    // The starting brand's colour names ("Vale Blue") belong to that brand. Name the copies by role, so
-    // messages never call a client's own colour by another organisation's name.
-    for (const [k, c] of Object.entries(raw.colours ?? {})) if (c && typeof c === "object") (c as { name?: string }).name = ROLE_NAMES[k] ?? k;
-  }
-
+  // Colours: from the list given (guessing each one's group), or the starting brand's palette with plain names.
   if (input.colours?.length) {
-    const roles = assignColourRoles(input.colours);
-    const surf = proposeSurfaces(roles.colours);
-    raw.colours = roles.colours;
-    raw.surfaces = surf.surfaces;
-    raw.captions = { ...raw.captions, ...surf.captions };
-    notes.push(...roles.notes, ...surf.notes);
+    const made = paletteFromList(input.colours);
+    raw.palette = made.palette;
+    notes.push(...made.notes);
+    const rules = rulesFromNames(input.colourRules, raw.palette.colours);
+    if (rules) {
+      raw.palette.rules = rules;
+      notes.push(`Colour rule from the guidelines: text in ${rules.text?.map((t: string) => raw.palette.colours.find((c: any) => c.id === t)?.name ?? t).join(", ")}.`);
+    }
+  } else {
+    // The starting brand's colour names ("Vale Blue") belong to that brand. Name the copies plainly, so messages
+    // never call a client's own colour by another organisation's name.
+    for (const c of raw.palette?.colours ?? []) c.name = ROLE_NAMES[c.id] ?? titleCaseId(c.id);
+    delete raw.palette?.rules;
   }
+  const schemed = schemesFor(raw);
+  raw.schemes = schemed.schemes;
+  raw.palette.colours = schemed.colours;
+  raw.schemeUse = { mode: "spread" };
+  raw.captions = { ...raw.captions, ...captionsFor(raw.palette.colours) };
+  raw.motion = { style: "calm" };
+  delete raw.examples;
+  if (raw.icons?.duotoneColour && !raw.palette.colours.some((c: any) => c.id === String(raw.icons.duotoneColour).split(".")[0])) delete raw.icons.duotoneColour;
+  notes.push(...schemed.notes);
 
   // Placeholder wordmark in the brand's own heading font.
   writeRaw(dir, raw);
@@ -265,7 +284,7 @@ export function duplicateBrand(fromId: string, name: string, id?: string): Brand
   const raw: any = readRaw(dest);
   raw.id = newId;
   raw.name = name;
-  if (raw.logo) raw.logo.alt = raw.logo.alt === readRaw(src).name ? name : raw.logo.alt;
+  if (raw.logo) raw.logo.alt = raw.logo.alt === (readRaw(src) as any).name ? name : raw.logo.alt;
   writeRaw(dest, raw);
   return readBrand(newId);
 }
@@ -277,14 +296,15 @@ export function duplicateBrand(fromId: string, name: string, id?: string): Brand
  */
 export function updateBrand(id: string, patch: Record<string, unknown>): BrandRecord & { saved: boolean } {
   const dir = brandFolder(id);
+  // Version 1 files are migrated first; the save writes the whole version 2 document.
   const current = readRaw(dir);
-  const next = merge(current, patch) as Record<string, unknown>;
+  const next = migrateBrand(merge(current, patch)).raw as Record<string, unknown>;
   next.id = id;
   const check = checkBrand(next, dir);
-  const shapeOk = BrandSchema.safeParse(next).success;
+  const shapeOk = safeParseBrand(next).success;
   if (!shapeOk) return { id, dir, raw: current, check, files: listBrandFiles(id, current), saved: false };
   writeRaw(dir, next);
-  return { id, dir, raw: next, check, files: listBrandFiles(id, next), saved: true };
+  return { id, dir, raw: next, migrated: false, check, files: listBrandFiles(id, next), saved: true };
 }
 
 /** Mark token groups as confirmed (removes them from provisional), or provisional again. */
@@ -402,28 +422,31 @@ export function addBrandFile(id: string, kind: BrandFileKind, fileName: string, 
     // "Both": a logo that cannot be seen on the dark surface is used on light backgrounds only, and the person is
     // told that videos (which show the dark-background logo) still need a white or reversed version.
     if (target === "both") {
-      const bg = raw.colours?.[raw.surfaces?.dark?.background]?.value;
-      const v = bg ? logoVisibility(path.join(dir, rel), bg) : null;
-      const lightBg = raw.colours?.[raw.surfaces?.light?.background]?.value;
+      // The darkest and the lightest background among the brand's schemes.
+      const st = checkBrand(raw, dir).schemes ?? [];
+      const bgs = st.filter((x) => x.enabled).map((x) => x.vars["--bg"]).sort((a, b) => luminance(a) - luminance(b));
+      const darkBg = bgs.find((b) => contrastRatio(WHITE, b) > contrastRatio(ENGINE_BLACK, b));
+      const lightBg = [...bgs].reverse().find((b) => contrastRatio(WHITE, b) <= contrastRatio(ENGINE_BLACK, b));
+      const v = darkBg ? logoVisibility(path.join(dir, rel), darkBg) : null;
       const vl = lightBg ? logoVisibility(path.join(dir, rel), lightBg) : null;
       const unseen = (x: typeof v) => Boolean(x && (x.empty || x.visibleShare < LOGO_ERROR_SHARE));
       if (unseen(v) && !unseen(vl)) {
         target = "onLight";
-        warnings.push("This logo cannot be seen on the dark background, so it is used on light backgrounds only. Videos show the logo on dark backgrounds: upload a white or reversed version, or use Make a white version.");
+        warnings.push("This logo can't be seen on dark backgrounds, so it is used on light ones only. Upload a white or reversed version for dark schemes, or use Make a white version.");
       } else if (unseen(vl) && !unseen(v)) {
         target = "onDark";
-        warnings.push("This logo cannot be seen on the light background, so it is used on dark backgrounds only. Upload a version for light backgrounds too.");
+        warnings.push("This logo can't be seen on light backgrounds, so it is used on dark ones only. Upload a version for light backgrounds too.");
       }
     }
     if (target === "onLight" || target === "both") raw.logo.onLight = rel;
     if (target === "onDark" || target === "both") raw.logo.onDark = rel;
     removeUnusedPlaceholder(raw, dir);
-    if (info.kind === "svg" && target !== "both" && !warnings.some((w) => w.startsWith("This logo cannot be seen"))) {
+    if (info.kind === "svg" && target !== "both" && !warnings.some((w) => w.startsWith("This logo can't be seen"))) {
       const cols = svgColours(bytes.toString("utf8"));
       if (cols.length <= 2)
         warnings.push(
           target === "onLight"
-            ? "Videos show the logo on dark backgrounds. Upload a version for dark backgrounds too, or use Make a white version."
+            ? "Dark schemes show the logo for dark backgrounds. Upload a version for dark backgrounds too, or use Make a white version."
             : "Upload a version of the logo for light backgrounds too.",
         );
     }
@@ -519,8 +542,7 @@ export function writePlaceholderLogo(id: string): { onLight: string; onDark: str
   const svg = (colour: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 100" width="${width}" height="100" role="img" aria-label="${escapeXml(name)} (placeholder logo)"><title>${escapeXml(name)}</title><path d="${t.d}" fill="${colour}"/></svg>\n`;
   fs.mkdirSync(path.join(dir, "logo"), { recursive: true });
-  const text = raw.colours?.text?.value ?? "#0B0C0C";
-  const white = raw.colours?.background?.value ?? "#FFFFFF";
+  const { darkest: text, lightest: white } = extremes(raw);
   fs.writeFileSync(path.join(dir, "logo", "placeholder-logo.svg"), svg(text));
   fs.writeFileSync(path.join(dir, "logo", "placeholder-logo-white.svg"), svg(white));
   return { onLight: "logo/placeholder-logo.svg", onDark: "logo/placeholder-logo-white.svg" };
@@ -536,7 +558,7 @@ export function makeReverseLogo(id: string, rel?: string): BrandRecord & { file:
   const src = rel ?? raw.logo.onLight;
   if (!src.toLowerCase().endsWith(".svg")) throw new Error("Only SVG logos can be turned white. Upload a white version instead.");
   const svg = fs.readFileSync(path.join(dir, src), "utf8");
-  const white = raw.colours?.background?.value ?? "#FFFFFF";
+  const white = extremes(raw).lightest;
   const cols = svgColours(svg);
   let out = svg;
   for (const c of cols) out = out.replace(new RegExp(c.replace("#", "#?") + "\\b", "gi"), white);
@@ -555,6 +577,130 @@ export function makeReverseLogo(id: string, rel?: string): BrandRecord & { file:
 function removeUnusedPlaceholder(raw: any, dir: string): void {
   if (String(raw.logo.onLight).includes("placeholder-logo") || String(raw.logo.onDark).includes("placeholder-logo")) return;
   for (const f of ["placeholder-logo.svg", "placeholder-logo-white.svg"]) fs.rmSync(path.join(dir, "logo", f), { force: true });
+}
+
+/** The darkest and lightest colours of a brand's palette (version 1 or 2), for placeholder and white logos. */
+function extremes(raw: any): { darkest: string; lightest: string } {
+  const values: string[] = (raw.palette?.colours ?? Object.values(raw.colours ?? {})).map((c: any) => c?.value).filter(isHex);
+  const sorted = [...values].sort((a, b) => luminance(a) - luminance(b));
+  const darkest = sorted[0] && luminance(sorted[0]) < 0.05 ? sorted[0] : ENGINE_BLACK;
+  const lightest = sorted[sorted.length - 1] && luminance(sorted[sorted.length - 1]) > 0.9 ? sorted[sorted.length - 1] : WHITE;
+  return { darkest: darkest.toUpperCase(), lightest: lightest.toUpperCase() };
+}
+
+// ---------- palettes and schemes for new brands ----------
+
+const ROLE_GROUP: Record<string, string> = { primary: "core", text: "core", accent: "accent", accent2: "accent", tint: "secondary", line: "secondary", background: "neutral" };
+
+function titleCaseId(id: string): string {
+  return id.replace(/-+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** A palette id from a colour name: "HMCTS blue" is hmcts-blue. Unique within the list. */
+export function colourIdFrom(name: string, taken: Set<string>): string {
+  let base = name
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+  if (!/^[a-z]/.test(base)) base = `c-${base}`.replace(/-+$/, "") || "colour";
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  taken.add(id);
+  return id;
+}
+
+/**
+ * A version 2 palette from a plain list of colours: each one's group comes from its role (given, or guessed from its
+ * name and lightness). Saturated colours get 10% and 25% tints; white, black and greys do not.
+ */
+export function paletteFromList(list: Array<{ value: string; name?: string; role?: string; group?: string; tintOf?: string; tintValues?: { t10?: string; t25?: string } }>): { palette: any; notes: string[] } {
+  const notes: string[] = [];
+  const roles = assignColourRoles(list);
+  const roleOf = new Map<string, string>();
+  for (const [role, tok] of Object.entries(roles.colours)) if (tok && !roles.invented.includes(role)) roleOf.set(tok.value.toUpperCase(), role);
+  const taken = new Set<string>();
+  const colours: any[] = [];
+  const seen = new Set<string>();
+  for (const c of list) {
+    const value = (c.value ?? "").toUpperCase();
+    if (!isHex(value) || seen.has(value)) continue;
+    seen.add(value);
+    const role = c.role ?? roleOf.get(value);
+    const name = (c.name?.trim() || (role ? (ROLE_NAMES[role] ?? titleCaseId(role)) : value)).slice(0, 40);
+    const group = c.group && STANDARD_GROUPS.some((g) => g.id === c.group) ? c.group : role ? (ROLE_GROUP[role] ?? "secondary") : "secondary";
+    // Tints of every colour but white and black (a grey's 10% tint is a calm background).
+    const tints = luminance(value) > 0.01 && luminance(value) < 0.9;
+    colours.push({ id: colourIdFrom(name, taken), name, value, group, tints, ...(tints && c.tintValues ? { tintValues: c.tintValues } : {}) });
+  }
+  // Invented roles (no near-black text colour, no white) are added so text and backgrounds can pass.
+  for (const role of roles.invented) {
+    const tok = roles.colours[role];
+    if (!tok || seen.has(tok.value.toUpperCase()) || (role !== "text" && role !== "background")) continue;
+    seen.add(tok.value.toUpperCase());
+    colours.push({ id: colourIdFrom(tok.name ?? role, taken), name: (tok.name ?? ROLE_NAMES[role] ?? role).slice(0, 40), value: tok.value.toUpperCase(), group: ROLE_GROUP[role] ?? "neutral", tints: false });
+    notes.push(`Added ${tok.name ?? role} (${tok.value}) so text has a colour that reads.`);
+  }
+  if (colours.length < 2) colours.push({ id: colourIdFrom("White", taken), name: "White", value: WHITE, group: "neutral", tints: false });
+  return { palette: { groups: STANDARD_GROUPS.map((g) => ({ ...g })), colours }, notes };
+}
+
+/** Colour rules naming colours by name, as palette ids. White is added to the palette when a rule needs it. */
+function rulesFromNames(rules: CreateBrandInput["colourRules"], colours: any[]): any | undefined {
+  if (!rules?.text?.length && !rules?.never?.length) return undefined;
+  const idOf = (n: string) => {
+    const low = n.toLowerCase().trim();
+    const hit = colours.find((c) => c.name.toLowerCase() === low) ?? colours.find((c) => c.name.toLowerCase().split(" ").pop() === low.split(" ").pop());
+    if (hit) return hit.id as string;
+    if (low === "white") {
+      colours.push({ id: "white", name: "White", value: WHITE, group: "neutral", tints: false });
+      return "white";
+    }
+    return undefined;
+  };
+  const text = [...new Set((rules.text ?? []).map(idOf).filter(Boolean))] as string[];
+  const never = (rules.never ?? []).map((n) => ({ text: idOf(n.text), background: idOf(n.background) })).filter((n) => n.text && n.background);
+  const out: any = {};
+  if (text.length) out.text = text.slice(0, 6);
+  if (never.length) out.never = never.slice(0, 24);
+  if (rules.source) out.source = rules.source.slice(0, 400);
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The top four suggested schemes for a palette, with any colour they need added to it. */
+export function schemesFor(raw: any): { schemes: any[]; colours: any[]; notes: string[] } {
+  const parsed = { fonts: raw.fonts } as Brand;
+  const weightOk = (() => {
+    try {
+      return emphasisWeightAvailable(parsed);
+    } catch {
+      return false;
+    }
+  })();
+  const r = recommendSchemes(raw.palette, { emphasisWeightAvailable: weightOk, limit: 4 });
+  const colours = [...raw.palette.colours];
+  for (const s of r.schemes) for (const a of s.adds) if (!colours.some((c) => c.id === a.id)) colours.push({ ...a, tints: false });
+  const schemes = r.schemes.map(({ score: _s, reasons: _r, contrast: _c, kind: _k, adds: _a, ...rest }) => ({ ...rest, enabled: true }));
+  if (!schemes.length) {
+    // Nothing passes: a plain white scheme with the darkest colour, so the brand renders until real colours are in.
+    const dark = [...colours].sort((a, b) => luminance(a.value) - luminance(b.value))[0];
+    if (!colours.some((c) => c.value === WHITE)) colours.push({ id: "white", name: "White", value: WHITE, group: "neutral", tints: false });
+    const white = colours.find((c) => c.value === WHITE)!;
+    schemes.push({ id: "plain", name: "Plain", enabled: true, background: white.id, text: dark.id, highlight: dark.id, shape: white.id, emphasis: "weight", fit: "any", logo: "auto", source: "suggested" } as any);
+    return { schemes, colours, notes: ["No pair of these colours passes AAA, so a plain scheme is used for now. Add a dark colour for text."] };
+  }
+  return { schemes, colours, notes: [`Suggested ${schemes.length} colour schemes: ${schemes.map((s) => s.name).join(", ")}.`] };
+}
+
+/** Caption colours: the darkest palette colour as the box, the lightest that passes AAA on it as the text. */
+export function captionsFor(colours: Array<{ id: string; value: string }>): { background: string; text: string } {
+  const sorted = [...colours].filter((c) => isHex(c.value)).sort((a, b) => luminance(a.value) - luminance(b.value));
+  const bg = sorted[0];
+  const text = [...sorted].reverse().find((c) => contrastRatio(c.value, bg.value) >= 7) ?? sorted[sorted.length - 1];
+  return { background: bg.id, text: text.id };
 }
 
 function escapeXml(s: string): string {

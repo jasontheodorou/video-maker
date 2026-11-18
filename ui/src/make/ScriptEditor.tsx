@@ -12,12 +12,12 @@ const COUNT_WITHIN = 20;
 import { isBusy, type JobViewData, type Meta } from "./types";
 
 /** What each story beat does, in plain words. */
-const BEAT_WORDS: Record<string, string> = { hook: "the opening", problem: "the problem", message: "the main message", insight: "what it means", proof: "the evidence", summary: "the summary", action: "what to do" };
+export const BEAT_WORDS: Record<string, string> = { hook: "the opening", problem: "the problem", message: "the main message", insight: "what it means", proof: "the evidence", summary: "the summary", action: "what to do" };
 
-const SLOT_LABELS: Record<string, string> = {
+export const SLOT_LABELS: Record<string, string> = {
   title: "Title",
-  eyebrow: "Small heading above the title",
-  subtitle: "Line under the title",
+  eyebrow: "Above title",
+  subtitle: "Under title",
   kicker: "Small heading",
   text: "Main text",
   support: "Supporting line",
@@ -26,43 +26,43 @@ const SLOT_LABELS: Record<string, string> = {
   detail: "Extra detail",
   heading: "Heading",
   value: "Number",
-  label: "What the number means",
-  source: "Where the number comes from",
+  label: "Meaning",
+  source: "Source",
   quote: "Quote",
-  name: "Name of the person quoted",
-  role: "Their job or role",
-  items: "List",
-  emphasis: "Words to highlight",
+  name: "Name",
+  role: "Role",
+  items: "Points",
+  emphasis: "Highlights",
   icon: "Icon",
   photo: "Photo",
   clip: "Video clip",
 };
 
 /** The label people see for a slot. Never the raw slot name. */
-function slotLabel(slot: string) {
+export function slotLabel(slot: string) {
   return SLOT_LABELS[slot] ?? String(slot).charAt(0).toUpperCase() + String(slot).slice(1).replace(/([A-Z])/g, " $1").toLowerCase();
 }
 
-interface Phrase {
+export interface Phrase {
   k: string;
   text: string;
 }
-interface SceneDraft {
+export interface SceneDraft {
   slots: Record<string, string>;
   items: string[];
   emphasis: string;
   icon: string;
   vo: Phrase[];
 }
-interface Draft {
+export interface Draft {
   title: string;
   scenes: SceneDraft[];
 }
 
 let phraseSeq = 0;
-const phrase = (text: string): Phrase => ({ k: `p${++phraseSeq}`, text });
+export const phrase = (text: string): Phrase => ({ k: `p${++phraseSeq}`, text });
 
-function toDraft(spec: any): Draft {
+export function toDraft(spec: any): Draft {
   return {
     title: spec.title ?? "",
     scenes: spec.scenes.map((s: any) => {
@@ -76,7 +76,7 @@ function toDraft(spec: any): Draft {
 }
 
 /** The spec with the edits applied, in the same way the first version of the page collected them. */
-function collect(spec: any, d: Draft): any {
+export function collect(spec: any, d: Draft): any {
   const next = clone(spec);
   next.title = d.title.trim();
   next.scenes.forEach((s: any, si: number) => {

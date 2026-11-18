@@ -13,7 +13,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createBrand, addBrandFile, updateBrand, readBrand, useOpenFont, brandIdFromName, slugifyBrandName, brandFolder, type BrandRecord } from "./store";
-import { extractGuidelinesText, suggestTokensFromText, type TokenSuggestions } from "./guidelines";
+import { extractGuidelinesText, suggestTokensFromText, type TokenSuggestions, type SuggestedColour } from "./guidelines";
+import { mixWithWhite, colourDifference } from "../colour-core";
 import { assignColourRoles, proposeSurfaces, contrastMatrix, normaliseHex, type ColourSet } from "./palette";
 import { FONT_EXTENSIONS, cachedOpenFonts, listOpenFonts } from "./fonts";
 
@@ -117,7 +118,8 @@ export async function importBrandFromFolder(srcDir: string, opts: ImportOptions 
 
   // ---- sort the files ----
   const fontFiles = files.filter((f) => (FONT_EXTENSIONS as readonly string[]).includes(path.extname(f).toLowerCase()));
-  const docFiles = files.filter((f) => /\.(pdf|md|txt)$/i.test(f) && !/colou?rs?|palette/i.test(path.basename(f)) && !/licen[cs]e|ofl/i.test(path.basename(f)));
+  // A PDF is always read as guidelines (a colour guide PDF included); text files named for colours are colour lists.
+  const docFiles = files.filter((f) => (/\.pdf$/i.test(f) || (/\.(md|txt)$/i.test(f) && !/colou?rs?|palette/i.test(path.basename(f)))) && !/licen[cs]e|ofl/i.test(path.basename(f)));
   const colourFiles = files.filter((f) => /colou?rs?|palette/i.test(path.basename(f)) && /\.(txt|json|csv|md)$/i.test(f));
   const iconFiles = files.filter((f) => /\.svg$/i.test(f) && /(^|[\\/])icons?[\\/]/i.test(lower(f)));
   const logoFiles = files.filter((f) => IMAGE.test(f) && !iconFiles.includes(f) && /logo|wordmark|lockup|crest|mark/i.test(lower(f)) && /\.(svg|png)$/i.test(f));
@@ -151,31 +153,33 @@ export async function importBrandFromFolder(srcDir: string, opts: ImportOptions 
   }
 
   // ---- colours ----
-  const colourList: Array<{ value: string; name?: string; role?: string; from: string }> = [];
+  const colourList: Array<{ value: string; name?: string; role?: string; group?: string; tintValues?: { t10?: string; t25?: string }; from: string }> = [];
   for (const f of colourFiles) for (const c of parseColourList(fs.readFileSync(f, "utf8"))) colourList.push({ ...c, from: rel(f) });
-  if (!colourList.length && suggestions) for (const c of suggestions.colours) colourList.push({ value: c.value, name: c.name, role: c.role, from: "guidelines" });
+  if (!colourList.length && suggestions) colourList.push(...foldTints(suggestions.colours).map((c) => ({ ...c, from: "guidelines" })));
 
-  const record0 = createBrand({ name, id, from: opts.from ?? "demo", colours: colourList.length ? colourList : undefined, description: `Imported from ${path.basename(src)} on ${new Date().toISOString().slice(0, 10)}.` });
+  const record0 = createBrand({
+    name,
+    id,
+    from: opts.from ?? "demo",
+    colours: colourList.length ? colourList : undefined,
+    colourRules: suggestions?.colourRules,
+    description: `Imported from ${path.basename(src)} on ${new Date().toISOString().slice(0, 10)}.`,
+  });
   notes.push(...record0.notes.filter((n) => !/placeholder/.test(n)));
   const provisional = new Set<string>(["voice"]);
   if (!colourList.length) {
     provisional.add("colours");
     gaps.push({ group: "colours", message: "No colours were supplied. The starting brand's colours are used until you add the real ones." });
   } else {
-    const roles = assignColourRoles(colourList);
-    if (roles.invented.length) {
+    // Each colour's group came from the guide's headings (or a guess); the schemes were suggested from them.
+    const check = readBrand(id).check;
+    if (!(check.schemes ?? []).some((s) => s.usable)) {
       provisional.add("colours");
-      gaps.push({ group: "colours", message: `These colour roles were made up because the list did not include them: ${roles.invented.join(", ")}.` });
+      gaps.push({ group: "colours", message: "No colour scheme passes AAA yet. Add a dark colour for text, then suggest schemes again." });
     }
-    if (roles.unused.length) notes.push(`Colours not used for any role: ${roles.unused.map((c) => `${c.name ?? ""} ${c.value}`.trim()).join(", ")}.`);
-    const surf = proposeSurfaces(roles.colours);
-    if (!surf.ok) {
+    if (!colourList.some((c) => c.group || c.role)) {
       provisional.add("colours");
-      gaps.push({ group: "colours", message: "Some text colour pairs do not pass AAA. See the contrast messages." });
-    }
-    if (!colourList.some((c) => c.role)) {
-      provisional.add("colours");
-      gaps.push({ group: "colours", message: "Colour roles (primary, text, background, accent, tint) were guessed from the colours. Confirm them." });
+      gaps.push({ group: "colours", message: "Colour groups were guessed. Check them on the Colours page." });
     }
   }
 
@@ -314,7 +318,7 @@ export async function importBrandFromFolder(srcDir: string, opts: ImportOptions 
   current = updateBrand(id, patch);
 
   // ---- contrast summary ----
-  const legalPairs = contrastMatrix((current.raw as any).colours as ColourSet)
+  const legalPairs = contrastMatrix(Object.fromEntries(((current.raw as any).palette?.colours ?? []).map((c: any) => [c.id, { value: c.value, name: c.name }])) as ColourSet)
     .filter((p) => p.result.passesAAA)
     .map((p) => `${p.foreground} on ${p.background} (${p.result.ratioText} to 1)`);
   for (const i of current.check.issues.filter((x) => x.level === "error")) gaps.push({ group: i.field.split(".")[0], message: i.message });
@@ -335,6 +339,23 @@ export async function importBrandFromFolder(srcDir: string, opts: ImportOptions 
     gaps,
     warnings,
   };
+}
+
+/**
+ * Fold the tints a guide lists ("Golden" under "10% tints") into their parent colour: a listed tint within ΔE 3 of the
+ * computed mix is dropped (the computed one is used), otherwise it is kept as the parent's exact tint value.
+ */
+export function foldTints(colours: SuggestedColour[]): Array<{ value: string; name?: string; role?: string; group?: string; tintValues?: { t10?: string; t25?: string } }> {
+  const parents = colours.filter((c) => !c.tintOf);
+  return parents.map((p) => {
+    const tintValues: { t10?: string; t25?: string } = {};
+    for (const t of colours.filter((c) => c.tintOf && c.tintOf === p.name)) {
+      const step = t.tintStep === 10 ? 10 : 25;
+      const computed = mixWithWhite(p.value, step === 10 ? 0.9 : 0.75);
+      if (colourDifference(computed, t.value) >= 3) tintValues[step === 10 ? "t10" : "t25"] = t.value;
+    }
+    return { value: p.value, name: p.name, role: p.role, group: p.group, ...(Object.keys(tintValues).length ? { tintValues } : {}) };
+  });
 }
 
 function titleCase(s: string): string {

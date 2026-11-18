@@ -19,38 +19,7 @@ import { loadConfig, getFormat, type FormatId } from "../engine/config";
 import { runOk } from "../engine/proc";
 import { renderBuild } from "../engine/render";
 import { parseArgs, jobArg, main } from "./cli";
-
-type Win = { a: number; b: number; kind: "smooth" | "steady" | "edge"; label: string };
-
-/** Read the E, X, W, D, C and H arrays the compiler writes into the page, plus timed clips. */
-function schedule(html: string): Win[] {
-  const arr = (name: string): unknown[][] => {
-    const m = new RegExp(`var ${name} = (\\[.*?\\]);\\n`).exec(html);
-    return m ? (JSON.parse(m[1]) as unknown[][]) : [];
-  };
-  const w: Win[] = [];
-  for (const e of arr("E")) w.push({ a: e[3] as number, b: (e[3] as number) + (e[2] as number), kind: "smooth", label: `entrance ${e[0]}` });
-  for (const x of arr("X")) w.push({ a: x[2] as number, b: (x[2] as number) + (x[1] as number), kind: "smooth", label: `crossfade ${x[0]}` });
-  for (const x of arr("W")) w.push({ a: x[4] as number, b: (x[4] as number) + (x[3] as number), kind: "smooth", label: `wipe ${x[0]}` });
-  for (const d of arr("D")) w.push({ a: d[4] as number, b: (d[4] as number) + (d[3] as number), kind: "steady", label: `photo drift ${d[0]}` });
-  for (const c of arr("C")) w.push({ a: c[4] as number, b: (c[4] as number) + (c[3] as number), kind: "edge", label: `caption fade ${c[0]}` });
-  for (const h of arr("H")) {
-    w.push({ a: h[1] as number, b: (h[1] as number) + (h[3] as number), kind: "edge", label: `word line ${h[0]}` });
-    w.push({ a: h[2] as number, b: (h[2] as number) + (h[3] as number), kind: "edge", label: `word line ${h[0]}` });
-  }
-  // Timed elements switch on and off at their data-start and end. Videos play throughout.
-  const re = /<(div|video)[^>]*\bid="([^"]+)"[^>]*\bdata-start="([\d.]+)"[^>]*\bdata-duration="([\d.]+)"/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
-    const [, tag, id, s, d] = m;
-    const a = Number(s);
-    const b = a + Number(d);
-    if (tag === "video") w.push({ a, b, kind: "steady", label: `clip ${id}` });
-    w.push({ a: a - 0.02, b: a + 0.02, kind: "edge", label: `${id} starts` });
-    w.push({ a: b - 0.02, b: b + 0.02, kind: "edge", label: `${id} ends` });
-  }
-  return w;
-}
+import { schedule, type Win } from "./motion-schedule";
 
 /** Mean absolute difference between consecutive grey frames, for every frame. */
 async function frameDiffs(file: string, width: number, height: number): Promise<{ mean: number[]; changed: number[]; strong: number[] }> {
@@ -134,7 +103,7 @@ main(async () => {
       const edges = active(i, ["edge"], 1 / fps);
       const clipOn = steady.some((w) => w.label.startsWith("clip"));
       // Inside the body of a smooth movement (not its first or last 3 frames, where the curve is nearly flat).
-      const body = smooth.filter((w) => t > w.a + 3 / fps && t < w.b - 3 / fps);
+      const body = smooth.filter((w) => t > w.a + 3 / fps && t < w.b - Math.max(3 / fps, w.tail ?? 0));
       if (body.length && !clipOn && mean[i] === 0) frozen.push(`${t.toFixed(3)} s (${body.map((w) => w.label).join(", ")})`);
       if (body.length && !edges.length && !clipOn && i > 1 && i + 1 < mean.length) {
         const around = Math.max(strong[i - 1], strong[i + 1]);

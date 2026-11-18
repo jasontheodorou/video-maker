@@ -54,7 +54,8 @@ export const video: SceneDefinition<Slots> = {
   description:
     "A short muted clip, with an optional short line of text. Use it to show a place or service in action. The clip must be in the brand's media folder and last at least as long as the scene from its start point. Text up to 48 characters.",
   beats: ["hook", "problem", "message", "insight", "proof", "summary"],
-  surface: "dark",
+  legacyScheme: "dark",
+  schemeNeed: "any",
   media: true,
   slots: Slots,
   text: [{ slot: "text", maxChars: 48, maxLines: { "16x9": 2, "9x16": 4, "1x1": 3 } }],
@@ -64,7 +65,7 @@ export const video: SceneDefinition<Slots> = {
   },
   clip: (s) => s.clip,
   clipLayout: (ctx) => place(ctx),
-  elements: (s) => (s.text ? [{ id: "panel", entrance: "rise", slot: "text" }] : []),
+  elements: (s) => (s.text ? [{ id: "panel", role: "body" as const, only: ["rise", "fade"] as const, entrance: "rise", slot: "text" }] : []),
   markup: (ctx) => {
     const m = ctx.clip(ctx.slots.clip);
     const poster = ctx.still && m?.posterAsset ? `<div class="media-box" aria-hidden="true"><img class="photo" src="${m.posterAsset}" alt=""></div>` : "";

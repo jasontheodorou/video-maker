@@ -140,7 +140,7 @@ export function Checks() {
       ) : null}
       {unconfirmed.length ? (
         <p className="unconfirmed">
-          {link("sec-about", "Still to confirm")}
+          {link("sec-overview", "Still to confirm")}
           {`: ${unconfirmed.join(", ")}. These do not stop videos.`}
         </p>
       ) : null}

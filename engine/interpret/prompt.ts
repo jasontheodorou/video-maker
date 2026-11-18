@@ -6,6 +6,7 @@ import { loadConfig, type SizeId } from "../config";
 import { sceneCatalogue } from "../scenes";
 import { specJsonSchema } from "../api";
 import { PURPOSES, CHANNELS, BEATS } from "../schema";
+import { MOTION_STYLES } from "../motion-rules";
 
 export interface MediaItem {
   /** File name inside the job's media folder, exactly as the spec should name it. */
@@ -170,14 +171,37 @@ export function portableSchema(node: unknown): unknown {
   return o;
 }
 
-/** The part of the spec the model writes: title and scenes. The engine adds version, brand, facts, voice and formats. */
+/** Remove keys from every object schema under a node (scene variants live in oneOf or anyOf). */
+function stripProps(node: unknown, keys: string[]): unknown {
+  if (Array.isArray(node)) return node.map((n) => stripProps(n, keys));
+  if (!node || typeof node !== "object") return node;
+  const o: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) o[k] = stripProps(v, keys);
+  if (o.properties && typeof o.properties === "object") {
+    const props = { ...(o.properties as Record<string, unknown>) };
+    for (const k of keys) delete props[k];
+    o.properties = props;
+    if (Array.isArray(o.required)) o.required = (o.required as string[]).filter((r) => !keys.includes(r));
+  }
+  return o;
+}
+
+/**
+ * The part of the spec the model writes: title, scenes and, optionally, a motion style. The engine adds version,
+ * brand, facts, voice and formats. Colour schemes and per-scene motion are never offered to the model: the engine
+ * and the person choose them.
+ */
 export function writeSchema(): unknown {
   const full = portableSchema(specJsonSchema()) as { properties: Record<string, unknown> };
   return {
     type: "object",
     additionalProperties: false,
     required: ["title", "scenes"],
-    properties: { title: full.properties.title, scenes: full.properties.scenes },
+    properties: {
+      title: full.properties.title,
+      scenes: stripProps(full.properties.scenes, ["scheme", "motion"]),
+      look: { type: "object", additionalProperties: false, properties: { motionStyle: { type: "string", enum: [...MOTION_STYLES] } } },
+    },
   };
 }
 
@@ -239,6 +263,7 @@ Writing rules:
 - Photos and clips: use them only in scene types that have a photo or clip slot, give the file name exactly as listed in "src", and only when the picture suits the scene. Never describe a photo you have not been told about.
 - Icons: give an icon by its name, such as {"icon": "calendar"}. Prefer the organisation's own icons. Use an icon only when it helps the viewer understand. Never more than one per scene.
 - Do not use scene ids unless you need them. Leave weight out of icons.
+- Set look.motionStyle only if the brief asks for a feel: still or calm for serious or sensitive subjects, crisp for practical how-to, lively for events. Otherwise leave it out. The engine owns all timing, colours and colour schemes.
 - Speech runs at about ${cfg.voice.wordsPerSecond} words a second.`;
 }
 

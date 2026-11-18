@@ -14,12 +14,22 @@ import { groupWords, buildCaptions, fullyVisibleSeconds } from "../engine/captio
 import { captionFitter } from "../engine/captionfit";
 import { matchWords } from "../engine/align";
 import { contrastFixes } from "../engine/brand/fixes";
+import { migrateBrand } from "../engine/brand/migrate";
+import { recommendSchemes } from "../engine/brand/recommend";
 import { contrastRatio } from "../engine/contrast";
+import { resolveRef } from "../engine/colour-core";
+import { compileStill } from "../engine/compile";
+import { getScene } from "../engine/scenes";
+import { assignSchemes } from "../engine/schemes";
+import { resolveMotion } from "../engine/motion-plan";
+import { motionCheck } from "../engine/lint";
+import { peakEdgeSpeed } from "../engine/transitions";
 import { readingSeconds } from "../engine/config";
 import { BRANDS_DIR } from "../engine/paths";
 import { main } from "./cli";
 
 let failures = 0;
+const getSceneSample = (type: string) => getScene(type).sample as Record<string, unknown>;
 function expect(name: string, ok: boolean, detail = "") {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `: ${detail}` : ""}`);
   if (!ok) failures++;
@@ -76,12 +86,13 @@ main(async () => {
   expect("the short sample spec fits", !good.some((f) => f.level === "error"), good.map((f) => f.message).join(" | "));
   fs.rmSync(dir, { recursive: true, force: true });
 
-  // Contrast.
+  // Contrast. The demo brand is still version 1 on disk: it loads through the migration.
   const raw = JSON.parse(fs.readFileSync(path.join(BRANDS_DIR, "demo", "brand.json"), "utf8"));
   expect("the demo brand passes AAA everywhere", validateBrand(raw, path.join(BRANDS_DIR, "demo")).ok);
   const bad = { ...raw, surfaces: { ...raw.surfaces, light: { background: "background", text: "text", accent: "accent" } } };
   const badCheck = validateBrand(bad, path.join(BRANDS_DIR, "demo"));
-  expect("yellow text on white fails AAA with a clear message", !badCheck.ok && badCheck.issues.some((i) => /needs 7 to 1/.test(i.message)));
+  const lightIssue = badCheck.issues.find((i) => i.field === "schemes.light.highlight");
+  expect("yellow key words on white fail AAA, and only that scheme is left out", badCheck.ok && /^Fails AAA/.test(lightIssue?.message ?? "") && badCheck.schemes?.find((x) => x.id === "light")?.usable === false, lightIssue?.message ?? "no issue");
 
   // Reading time: even with very short voiceover, every text element stays up long enough.
   const spec = parseSpec(base);
@@ -138,19 +149,20 @@ main(async () => {
     expect("no word runs across a clear pause in the voice", timed[3].start >= pauseEnd - 0.08 && timed[2].end <= 1.65 + 0.08, `"or" at ${timed[3].start.toFixed(2)} s, pause ends ${pauseEnd.toFixed(2)} s`);
   }
 
-  // Contrast fixes never make a passing pair fail (the shared White token with a yellow primary).
+  // Contrast fixes: a failing scheme gets a fix that changes only that scheme, never a dead end.
   {
     const demo = JSON.parse(fs.readFileSync(path.join(process.cwd(), "brands", "demo", "brand.json"), "utf8"));
     demo.colours.primary.value = "#F2C200";
     const fixes = contrastFixes(demo);
+    const textFix = fixes["schemes.dark.text"]?.find((f) => f.kind === "use");
+    const migrated = migrateBrand(demo).raw as unknown as { palette: Parameters<typeof resolveRef>[1] };
+    const valueOf = (ref: string) => resolveRef(ref, migrated.palette)!;
+    expect("a fix can point the dark scheme's text at a colour that passes", !!textFix && contrastRatio(valueOf(textFix.colour!), "#F2C200") >= 7, textFix?.label ?? "none");
     const all = Object.values(fixes).flat();
-    const badRecolour = all.some((f) => f.kind === "recolour" && f.colour === "background");
-    expect("contrast fixes never recolour a shared token into new failures", all.length > 0 && !badRecolour, all.map((f) => f.label).slice(0, 3).join("; "));
-    const textFix = fixes["surfaces.dark.text"]?.find((f) => f.kind === "use");
-    expect("a fix can point the dark text at a colour that passes", !!textFix && contrastRatio(demo.colours[textFix.token!].value, "#F2C200") >= 7, textFix?.label ?? "none");
+    expect("recolour fixes never change a colour other schemes use", all.filter((f) => f.kind === "recolour" && f.path.startsWith("palette.")).every((f) => !/primary|background|text/.test(f.path)) && all.some((f) => /^Change .* to #/.test(f.label)), all.map((f) => f.label).slice(0, 4).join("; "));
   }
 
-  // A logo the same colour as the dark background fails the brand check.
+  // A logo the same colour as the dark background: that scheme can't open or close videos; another one does.
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "va-logo-"));
     fs.cpSync(path.join(process.cwd(), "brands", "demo"), dir, { recursive: true });
@@ -158,8 +170,81 @@ main(async () => {
     const raw = JSON.parse(fs.readFileSync(path.join(dir, "brand.json"), "utf8"));
     raw.logo.onDark = "logo/same.svg";
     const v = validateBrand(raw, dir);
-    expect("a logo that cannot be seen on the dark background is an error", !v.ok && v.issues.some((i) => i.field === "logo.onDark" && /cannot be seen/.test(i.message)), v.issues.find((i) => i.field === "logo.onDark")?.message.slice(0, 80) ?? "no issue");
+    const dark = v.schemes?.find((x) => x.id === "dark");
+    expect("a logo that can't be seen on the dark scheme stops it opening and closing videos", dark?.usable === true && dark.bookends === false && v.issues.some((i) => i.field === "schemes.dark.logo" && /Can't see the logo/.test(i.message)), v.issues.find((i) => i.field === "schemes.dark.logo")?.message ?? "no issue");
+    fs.writeFileSync(path.join(dir, "logo", "white.svg"), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><rect width="100" height="40" fill="#FFFFFF"/></svg>');
+    raw.logo.onLight = "logo/white.svg";
+    const v2 = validateBrand(raw, dir);
+    expect("with no scheme the logo shows on, the brand can't render", !v2.ok && v2.issues.some((i) => i.field === "schemes" && i.level === "error"));
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ---- colour model version 2 ----
+  {
+    const demoRaw = JSON.parse(fs.readFileSync(path.join(BRANDS_DIR, "demo", "brand.json"), "utf8"));
+    const m = migrateBrand(demoRaw);
+    const v2 = m.raw as { schemaVersion: number; schemes: Array<{ id: string }>; schemeUse: { mode: string } };
+    expect("version 1 brands migrate to three schemes used by scene type", m.migrated && v2.schemaVersion === 2 && v2.schemes.map((x) => x.id).join() === "dark,light,tint" && v2.schemeUse.mode === "by-type");
+    expect("migration is pure and repeatable", JSON.stringify(migrateBrand(demoRaw).raw) === JSON.stringify(m.raw) && JSON.stringify(migrateBrand(m.raw).raw) === JSON.stringify(m.raw));
+    // The demo compiles to the same page from version 1 and from its migrated version 2.
+    const a = compileStill({ type: "statement", slots: getSceneSample("statement"), id: "s1" }, loadBrand("demo"), "16x9").html;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "va-v2-"));
+    fs.cpSync(path.join(BRANDS_DIR, "demo"), tmp, { recursive: true });
+    fs.writeFileSync(path.join(tmp, "brand.json"), JSON.stringify(m.raw));
+    const b = compileStill({ type: "statement", slots: getSceneSample("statement"), id: "s1" }, loadBrand(tmp), "16x9").html;
+    expect("the demo compiles the same from version 1 and version 2", a === b);
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    // Scheme assignment: by type for the migrated demo; spread with no equal neighbours and shared bookends.
+    const demoBrand = loadBrand("demo");
+    const byType = assignSchemes(parseSpec(base), demoBrand).scenes.map((c) => c.scheme);
+    expect("migrated brands keep each scene type's old surface", byType.join() === "dark,light,dark", byType.join());
+    const long = parseSpec({
+      ...base,
+      scenes: [base.scenes[0], base.scenes[1], { ...base.scenes[1] }, { type: "stat", beat: "proof", slots: { value: "45%", label: "of homes recycle" }, voiceover: ["Most homes recycle."] }, { ...base.scenes[1] }, base.scenes[2]],
+    });
+    const spread = assignSchemes({ ...long, look: { schemes: "spread" } }, demoBrand).scenes.map((c) => c.scheme);
+    expect("spread: title and end share a scheme", spread[0] === spread[spread.length - 1], spread.join());
+    expect("spread: no two neighbours share a scheme", spread.every((x, i) => i === 0 || x !== spread[i - 1]), spread.join());
+    const single = assignSchemes({ ...long, look: { schemes: "single", scheme: "light" } }, demoBrand).scenes.map((c) => c.scheme);
+    expect("one scheme for the whole video", single.every((x) => x === "light"), single.join());
+    const singleTint = assignSchemes({ ...long, look: { schemes: "single", scheme: "tint" } }, { ...demoBrand, bookendSchemes: () => demoBrand.bookendSchemes().filter((x) => x.id !== "tint"), usableSchemes: () => demoBrand.usableSchemes().map((x) => (x.id === "tint" ? { ...x, bookends: false } : x)) }).scenes.map((c) => c.scheme);
+    expect("one scheme the logo can't show on still opens and closes on a scheme it can", singleTint.slice(1, -1).every((x) => x === "tint") && singleTint[0] !== "tint" && singleTint[0] === singleTint[singleTint.length - 1], singleTint.join());
+    const own = assignSchemes({ ...long, scenes: long.scenes.map((sc, i) => (i === 2 ? { ...sc, scheme: "tint" } : sc)) }, demoBrand);
+    expect("a scene's own scheme wins", own.scenes[2].scheme === "tint" && own.scenes[2].auto === false);
+    const wrong = validateSpec({ ...base, scenes: base.scenes.map((sc, i) => (i === 1 ? { ...sc, scheme: "nope" } : sc)) }, demoBrand);
+    expect("an unknown scheme is refused before rendering", !wrong.ok && wrong.issues.some((i) => i.path === "scenes.1.scheme"));
+
+    // Recommender: deterministic, and every suggestion passes.
+    const rec = recommendSchemes(demoBrand.brand.palette, { emphasisWeightAvailable: false });
+    expect("recommended schemes are the same every time", JSON.stringify(rec) === JSON.stringify(recommendSchemes(demoBrand.brand.palette, { emphasisWeightAvailable: false })));
+    expect("every recommended scheme passes AAA", rec.schemes.every((x) => x.contrast.text >= 7 && x.contrast.highlight >= 7 && x.contrast.icon >= 3));
+  }
+
+  // ---- motion library ----
+  {
+    const demoBrand = loadBrand("demo");
+    const calm = resolveMotion(parseSpec(base), demoBrand, ["dark", "light", "dark"]);
+    expect("Calm uses crossfades and no text effects", calm.scenes.slice(1).every((x) => x.transition === "crossfade") && calm.scenes.every((x) => x.textEffect === "none" && x.shape === "none"));
+    const long = parseSpec({ ...base, scenes: [base.scenes[0], { ...base.scenes[1], slots: { text: "We will collect your brown garden waste bin every two weeks from the start of next month" } }, base.scenes[2]] });
+    const words = resolveMotion({ ...long, scenes: long.scenes.map((sc, i) => (i === 1 ? { ...sc, motion: { text: "words" as const } } : sc)) }, demoBrand, ["dark", "light", "dark"]);
+    expect("word by word is refused on a long headline", words.problems.some((p) => p.scene === 1 && p.field === "motion.text" && /short titles/.test(p.message)));
+    const push = resolveMotion({ ...base, scenes: base.scenes.map((sc, i) => (i === 1 ? { ...sc, motion: { transition: "cut" as const } } : sc)) } as never, demoBrand, ["light", "light", "dark"]);
+    expect("a cut between matching scenes is refused", push.problems.some((p) => /glitch/.test(p.message)));
+    const count = resolveMotion({ ...base, scenes: [base.scenes[0], { type: "stat", beat: "proof", slots: { value: "1 in 4", label: "homes" }, voiceover: ["One in four."], motion: { text: "count" } }, base.scenes[2]] } as never, demoBrand, ["dark", "tint", "dark"]);
+    expect("count up is refused on a value that is not a single number", count.problems.some((p) => /single number/.test(p.message)));
+    const lively = resolveMotion({ ...parseSpec(base), look: { motionStyle: "lively" } }, demoBrand, ["dark", "light", "dark"]);
+    expect("Lively words the title and pushes or sweeps between scenes", lively.scenes[0].textEffect === "words" && ["push", "sweep"].includes(lively.scenes[1].transition));
+    const photoNext = resolveMotion({ ...parseSpec(base), look: { motionStyle: "lively" }, scenes: [base.scenes[0], { type: "photo", beat: "message", slots: { photo: { src: "park-trail.jpg" } }, voiceover: ["A park."] }, base.scenes[2]] } as never, demoBrand, ["dark", "dark", "dark"]);
+    expect("automatic choices next to a photo become crossfades", photoNext.scenes.slice(1).every((x) => x.transition === "crossfade") && photoNext.problems.length === 0);
+    expect("every transition edge stays under 212 px a frame", ["wipe", "push", "sweep"].every((t) => peakEdgeSpeed(t as never, 1920) <= 212));
+    // Text stays settled for most of its time on screen, whatever the style.
+    for (const style of ["calm", "crisp", "lively", "still"] as const) {
+      const sp = { ...parseSpec(base), look: { motionStyle: style } };
+      const tl = computeTimeline(sp, fake, null, { id: "bf_emma", speed: 1, file: "voice.wav", sampleRate: 24000 }, { brand: demoBrand });
+      const mc = motionCheck(sp, tl, demoBrand).filter((f) => f.level === "error");
+      expect(`${style}: timing passes the motion rules`, mc.length === 0, mc.map((f) => f.message).join(" | "));
+    }
   }
 
   await closeBrowser();

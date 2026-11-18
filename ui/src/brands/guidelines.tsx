@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { announce, api, focusNode } from "../shared/api";
 import { ProgressBar, PulseDot, Reveal, Stagger, StaggerItem } from "../shared/motion";
 import { useEditor } from "./context";
-import { ROLES } from "./colours";
+import { slugId } from "./colour";
 import { useFontActions } from "./fonts";
 import { FilePicker, InlineError, icon } from "./parts";
 
@@ -74,9 +74,12 @@ export function GuidelinesSection() {
 }
 
 function Suggestions({ s }: { s: any }) {
-  const { edit, bump, setOpen } = useEditor();
+  const { edit, bump, go, draft } = useEditor();
   const fonts = useFontActions();
-  const [roles, setRoles] = useState<string[]>(() => s.colours.map((c: any) => (c.role && ROLES.some((r) => r.key === c.role) ? c.role : "")));
+  // Each suggested colour goes into a palette group, or is skipped. Listed tints fold into their parent.
+  const colours: any[] = s.colours ?? [];
+  const [groups, setGroups] = useState<string[]>(() => colours.map((c: any) => (c.tintOf ? "tint" : c.group ?? (c.role === "accent" ? "accent" : c.role === "background" ? "neutral" : "core"))));
+  const [useRules, setUseRules] = useState(true);
   const [ticks, setTicks] = useState<Record<string, boolean>>({ tone: true, guidelines: true, rules: true, voice: false, iconWeight: true, logoMin: true });
   const tick = (key: string, id: string, label: string) => (
     <label className="choice" htmlFor={id}>
@@ -86,39 +89,60 @@ function Suggestions({ s }: { s: any }) {
   );
 
   function apply() {
-    const useColours = s.colours.map((c: any, i: number) => ({ c, role: roles[i] })).filter((x: any) => x.role);
-    const done: string[] = useColours.map((x: any) => `${x.role} colour`);
+    const chosen = colours.map((c: any, i: number) => ({ c, group: groups[i] })).filter((x: any) => x.group && x.group !== "skip");
+    const nColours = chosen.filter((x: any) => x.group !== "tint").length;
+    const rules = s.colourRules && useRules && (s.colourRules.text?.length || s.colourRules.never?.length) ? s.colourRules : null;
+    const done: string[] = nColours ? [`${nColours} colour${nColours === 1 ? "" : "s"}`] : [];
+    if (rules) done.push("colour rules");
     const tone = s.toneOfVoice && ticks.tone;
     const guide = s.guidelines && ticks.guidelines;
-    const rules = (s.rules?.do?.length || s.rules?.dont?.length) && ticks.rules;
+    const writingRules = (s.rules?.do?.length || s.rules?.dont?.length) && ticks.rules;
     const voice = s.voice && ticks.voice;
     const iconWeight = s.iconWeight && ticks.iconWeight;
     const logoMin = s.logoMinHeight && ticks.logoMin;
     if (tone) done.push("tone of voice");
     if (guide) done.push("guidelines");
-    if (rules) done.push("rules");
+    if (writingRules) done.push("rules");
     if (voice) done.push("voice");
     if (iconWeight) done.push("icon weight");
     if (logoMin) done.push("logo size");
     edit((d) => {
-      for (const { c, role } of useColours) d.colours[role] = { value: c.value.toUpperCase(), ...(c.name ? { name: c.name.slice(0, 40) } : {}) };
+      const pal = d.palette;
+      const byName = (n: string) => pal.colours.find((x: any) => x.name.toLowerCase() === String(n).toLowerCase());
+      for (const { c, group } of chosen.filter((x: any) => x.group !== "tint")) {
+        const value = c.value.toUpperCase();
+        const name = String(c.name || value).slice(0, 40);
+        // A colour with a role updates the palette colour with that id; one with a known name updates that colour.
+        const hit = (c.role && pal.colours.find((x: any) => x.id === c.role)) || (c.name && byName(c.name));
+        if (!pal.groups.some((g: any) => g.id === group)) pal.groups.push({ id: group, name: group[0].toUpperCase() + group.slice(1) });
+        if (hit) {
+          hit.value = value;
+          hit.name = name;
+          hit.group = group;
+        } else pal.colours.push({ id: slugId(name, pal.colours.map((x: any) => x.id)), name, value, group, tints: true });
+      }
+      for (const { c } of chosen.filter((x: any) => x.group === "tint")) {
+        const parent = byName(c.tintOf);
+        if (!parent || !c.tintStep) continue;
+        parent.tints = true;
+        parent.tintValues = { ...(parent.tintValues ?? {}), [`t${c.tintStep}`]: c.value.toUpperCase() };
+      }
+      if (rules) {
+        const id = (n: string) => byName(n)?.id ?? pal.colours.find((x: any) => x.id === n)?.id;
+        const text = (rules.text ?? []).map(id).filter(Boolean).slice(0, 6);
+        const never = (rules.never ?? []).map((p: any) => ({ text: id(p.text), background: id(p.background) })).filter((p: any) => p.text && p.background).slice(0, 24);
+        pal.rules = { ...(text.length ? { text } : {}), ...(never.length ? { never } : {}), ...(rules.source ? { source: String(rules.source).slice(0, 400) } : {}) };
+      }
       if (tone) d.toneOfVoice = s.toneOfVoice.slice(0, 4000);
       if (guide) d.guidelines = s.guidelines.slice(0, 20000);
-      if (rules) d.rules = { do: (s.rules.do ?? []).map((r: string) => r.slice(0, 300)), dont: (s.rules.dont ?? []).map((r: string) => r.slice(0, 300)) };
+      if (writingRules) d.rules = { do: (s.rules.do ?? []).map((r: string) => r.slice(0, 300)), dont: (s.rules.dont ?? []).map((r: string) => r.slice(0, 300)) };
       if (voice) d.voice.id = s.voice.id;
       if (iconWeight) d.icons = { ...(d.icons ?? {}), weight: s.iconWeight };
       if (logoMin) d.logo.minHeight = s.logoMinHeight;
     });
     bump();
-    announce(done.length ? `Added: ${done.join(", ")}. Check the contrast, then save.` : "No suggestions were chosen.");
-    if (done.length) {
-      setOpen("sec-colours", true);
-      requestAnimationFrame(() => {
-        const h = document.getElementById("sec-colours-h");
-        h?.scrollIntoView({ block: "start" });
-        focusNode(h, { preventScroll: true });
-      });
-    }
+    announce(done.length ? `Added: ${done.join(", ")}. Check the schemes, then save.` : "No suggestions were chosen.");
+    if (nColours || rules) go("sec-colours");
   }
 
   return (
@@ -127,26 +151,39 @@ function Suggestions({ s }: { s: any }) {
         <Sparkle size={24} weight="regular" aria-hidden="true" /> Suggestions
       </h3>
       <Stagger>
-        {s.colours.length ? (
+        {colours.length ? (
           <StaggerItem className="suggest-block">
             <h4 className="h4">Colours</h4>
             <ul className="suggest-colours plain-list">
-              {s.colours.map((c: any, i: number) => (
+              {colours.map((c: any, i: number) => (
                 <li key={i}>
                   <span className="swatch" style={{ background: c.value }} aria-hidden="true" />
                   <span className="suggest-colours__text">
                     <strong>{c.value}</strong> {c.name ?? ""}
+                    {c.tintOf ? ` (${c.tintStep}% tint of ${c.tintOf})` : ""}
                     {c.context ? <span className="suggest-colours__ctx">{`"${c.context.slice(0, 90)}"`}</span> : null}
                   </span>
-                  <select className="select select--compact" id={`sg-colour-${i}`} aria-label={`Use ${c.value}${c.name ? ` (${c.name})` : ""} as`} value={roles[i]} onChange={(e) => setRoles((r) => r.map((x, k) => (k === i ? e.target.value : x)))}>
-                    <option value="">Do not use</option>
-                    {ROLES.map((r) => (
-                      <option key={r.key} value={r.key}>{`${r.label} colour`}</option>
+                  <label className="visually-hidden" htmlFor={`sg-colour-${i}`}>{`Group for ${c.value}${c.name ? ` (${c.name})` : ""}`}</label>
+                  <select className="select select--compact" id={`sg-colour-${i}`} value={groups[i]} onChange={(e) => setGroups((g) => g.map((x, k) => (k === i ? e.target.value : x)))}>
+                    {c.tintOf ? <option value="tint">Use as the tint</option> : null}
+                    {[...new Set(["core", "accent", "secondary", "neutral", ...draft.palette.groups.map((g: any) => g.id)])].map((g) => (
+                      <option key={g} value={g}>
+                        {draft.palette.groups.find((x: any) => x.id === g)?.name ?? g[0].toUpperCase() + g.slice(1)}
+                      </option>
                     ))}
+                    <option value="skip">Skip</option>
                   </select>
                 </li>
               ))}
             </ul>
+            {s.colourRules && (s.colourRules.text?.length || s.colourRules.never?.length) ? (
+              <label className="choice" htmlFor="sg-colour-rules">
+                <input type="checkbox" id="sg-colour-rules" checked={useRules} onChange={(e) => setUseRules(e.target.checked)} />
+                <span>
+                  {`Colour rules: ${[s.colourRules.text?.length ? `text in ${s.colourRules.text.join(" or ")}` : "", ...(s.colourRules.never ?? []).map((p: any) => `never ${p.text} text on ${p.background}`)].filter(Boolean).join("; ")}`}
+                </span>
+              </label>
+            ) : null}
           </StaggerItem>
         ) : null}
         {s.fonts.length ? (

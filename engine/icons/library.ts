@@ -331,6 +331,12 @@ export function searchIcons(query: string, opts: IconSearchOptions = {}): IconSe
 
 // ---------- colouring ----------
 
+/** CSS variable of a palette colour reference ("blue.t25" is --c-blue-t25). Matches colour-core refVar. */
+function refVar(ref: string): string {
+  const m = /^(.+)\.t(10|25)$/.exec(ref);
+  return m ? `--c-${m[1]}-t${m[2]}` : `--c-${ref}`;
+}
+
 export interface IconColouring {
   /** Opacity of the light layer of duotone icons. */
   duotoneOpacity: number;
@@ -345,6 +351,6 @@ export interface IconColouring {
  */
 export function colourIconSvg(svg: string, colouring: IconColouring, opts: { tokenValue?: (name: string) => string } = {}): string {
   const op = Math.min(1, Math.max(0, colouring.duotoneOpacity));
-  const fill = colouring.duotoneColour ? (opts.tokenValue ? opts.tokenValue(colouring.duotoneColour) : `var(--c-${colouring.duotoneColour})`) : null;
+  const fill = colouring.duotoneColour ? (opts.tokenValue ? opts.tokenValue(colouring.duotoneColour) : `var(${refVar(colouring.duotoneColour)})`) : null;
   return svg.replace(/\sdata-layer="secondary"/g, ` opacity="${op}"${fill ? ` fill="${fill}"` : ""}`);
 }

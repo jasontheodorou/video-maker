@@ -68,6 +68,20 @@ export const EngineConfigSchema = z.object({
      * (a soft wipe; its visible edge crosses the frame in about 0.3 s, so it reads as fast).
      */
     darkLightTransition: z.enum(["crossfade", "wipe"]).default("crossfade"),
+    /**
+     * Length of each transition in seconds. crossfade and wipe fall back to the keys above. A colour sweep overlaps
+     * the two scenes for half its length (the next scene starts under the colour at the midpoint).
+     */
+    transitions: z
+      .object({
+        cut: z.literal(0).default(0),
+        crossfade: z.number().min(0.2).max(1.0).optional(),
+        wipe: z.number().min(0.3).max(1.2).optional(),
+        push: z.number().min(0.5).max(1.0).default(0.7),
+        sweep: z.number().min(0.8).max(1.4).default(1.0),
+      })
+      .strict()
+      .default({ cut: 0, push: 0.7, sweep: 1.0 }),
     enterDelay: z.number().min(0),
     firstEnterDelay: z.number().min(0),
     minSceneSeconds: z.number().positive(),

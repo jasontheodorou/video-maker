@@ -54,7 +54,7 @@ function adminLoginPage(error?: string): string {
     ${field({ id: "admin-password", label: "Admin password", autocomplete: "current-password", error })}
     <button type="submit">Continue</button>
   </form>`;
-  return pageShell(`${error ? "Error: " : ""}Settings`, body, error ? "error-summary" : undefined);
+  return pageShell(`${error ? "Error: " : ""}Settings`, body, error ? "error-summary" : undefined, { nav: "settings" });
 }
 
 function adminCreatePage(errors: Errors = []): string {
@@ -68,7 +68,7 @@ function adminCreatePage(errors: Errors = []): string {
     ${field({ id: "admin-password-again", label: "Type the admin password again", autocomplete: "new-password", error: err("admin-password-again") })}
     <button type="submit">Save admin password</button>
   </form>`;
-  return pageShell(`${errors.length ? "Error: " : ""}Choose an admin password`, body, errors.length ? "error-summary" : undefined);
+  return pageShell(`${errors.length ? "Error: " : ""}Choose an admin password`, body, errors.length ? "error-summary" : undefined, { nav: "settings" });
 }
 
 /** Checks a new admin password: long enough, typed twice, and not the team password. */
@@ -171,7 +171,7 @@ function settingsPage(o: { saved?: string; errors?: Errors } = {}): string {
   <form method="post" action="/settings/admin-logout" novalidate><button type="submit" class="secondary">Lock settings on this browser</button></form>
   ${authEnabled() ? `<p><a href="/logout">Sign out of the video maker on this browser</a></p>` : ""}
   ${share.refresh ? `<script>setTimeout(() => location.replace("/settings#share"), 4000);</script>` : ""}`;
-  return pageShell(`${errors.length ? "Error: " : ""}Settings`, body, errors.length ? "error-summary" : notice ? "notice" : undefined);
+  return pageShell(`${errors.length ? "Error: " : ""}Settings`, body, errors.length ? "error-summary" : notice ? "notice" : undefined, { nav: "settings" });
 }
 
 function redirect(res: http.ServerResponse, to: string) {

@@ -86,11 +86,12 @@ const own = resolveIcon({ icon: "calendar" }, demo);
 check("client icons override library icons by name", own?.source === "brand");
 
 // ---- brand module ----
-const demoColours = Object.entries(demo.brand.colours).map(([, v]) => ({ value: v!.value, name: v!.name }));
+const demoColours = demo.brand.palette.colours.map((c) => ({ value: c.value, name: c.name }));
 const roles = assignColourRoles(demoColours);
 const surf = proposeSurfaces(roles.colours);
 check("colour roles are guessed from a plain list", roles.colours.primary?.value === "#0B3B60" && roles.colours.text?.value === "#0B0C0C" && roles.colours.accent?.value === "#FFD84D", roles.notes.join(" | "));
-check("proposed surfaces match the hand-made demo surfaces", JSON.stringify(surf.surfaces) === JSON.stringify(demo.brand.surfaces) && surf.ok);
+const demoSurfaces = Object.fromEntries(["dark", "light", "tint"].map((id) => { const s = demo.scheme(id)!; return [id, { background: s.background, text: s.text, accent: s.highlight }]; }));
+check("proposed surfaces match the hand-made demo surfaces", JSON.stringify(surf.surfaces) === JSON.stringify(demoSurfaces) && surf.ok);
 const yellowOnWhite = proposeSurfaces({ primary: { value: "#FFD84D" }, text: { value: "#0B0C0C" }, background: { value: "#FFFFFF" }, accent: { value: "#FFD84D" }, tint: { value: "#FFF7D6" } });
 check("a light primary is never used under white text", yellowOnWhite.ok && yellowOnWhite.surfaces.dark.background !== "primary", yellowOnWhite.notes[0]);
 const sug = suggestTokensFromText(fs.readFileSync(path.join(demo.dir, "guidelines.md"), "utf8"));

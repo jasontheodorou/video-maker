@@ -1,7 +1,7 @@
 /*
- * Video maker: shared look. Warm, calm and restrained (after katsura), with WCAG AAA everywhere:
+ * Video maker: shared look ("Daylight Studio": light, calm, high contrast), with WCAG AAA everywhere:
  * every piece of text is 7:1 or more against its own background, and nothing is smaller than 16px.
- * One column, GOV.UK style: one thing after another, about 720px wide. Read DESIGN.md before adding styles.
+ * The studio layout (regions, panels, strip) lives in studio.css. Read DESIGN.md before adding styles.
  *
  * Gaps come from the spacing scale (multiples of 4 and 8) and are owned by the margin-top of the element below.
  */
@@ -9,21 +9,21 @@
 
 :root {
   /* ---- Surfaces: warm paper, white cards, sand tints ---- */
-  --paper: #faf8f4;
+  --paper: #e7eaee;
   --surface: #ffffff;
-  --tint: #f4efe7;
-  --tint-2: #ece5da;
-  --zebra: #fbf9f6;
-  --track: #e4ddd2;
-  --hairline: #e6dfd4;
+  --tint: #f3f4f6;
+  --tint-2: #e7eaee;
+  --zebra: #f3f4f6;
+  --track: #c9ced4;
+  --hairline: #c9ced4;
 
   /* ---- Text. Ink for nearly everything; text-2 still passes 9:1 on the deepest tint ---- */
-  --ink: #1b2128;
-  --text-2: #3d3832;
-  --field-edge: #6b625a; /* control borders: non-text, passes 3:1 */
+  --ink: #11161b;
+  --text-2: #2b3138;
+  --field-edge: #5c6670; /* control borders: non-text, passes 3:1 */
 
   /* ---- One quiet accent for links and progress; one orange, used only as a mark (never text) ---- */
-  --slate: #2b4a5c;
+  --slate: #0a4a73;
   --accent: #e8651a;
   --accent-soft: #fbe3d3;
 
@@ -35,6 +35,20 @@
   --warn: #5a3d00;
   --warn-tint: #f8f0da;
   --info-tint: #e9eef1;
+
+  /* ---- Daylight Studio tokens (spec 6.1). Older names above map onto these values. ---- */
+  --app: #e7eaee;
+  --panel: #ffffff;
+  --panel-2: #f3f4f6;
+  --well: #11161b;
+  --ink-2: #2b3138;
+  --on-well: #ffffff;
+  --link: #0a4a73;
+  --select: #dbe9f3;
+  --hover: #eef3f7;
+  --edge: #5c6670;
+  --rule: #c9ced4;
+  --mark: #e8651a;
 
   /* ---- Layout: one column ---- */
   --measure: 720px;
@@ -63,9 +77,9 @@
   --gap-page: 56px;
 
   /* ---- Radii ---- */
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 10px;
   --r-pill: 999px;
 
   /* ---- Depth: whispers, warm-tinted ---- */

@@ -45,10 +45,14 @@ async function main() {
   out.push(`- Guidelines: ${report.found.guidelines.join(", ") || "none"}`);
   out.push(`- Colours: ${report.found.colours.map((c) => `${c.name ?? ""} ${c.value}`.trim()).join(", ") || "none"}`);
   out.push("");
-  out.push("Colours by role:");
-  for (const [role, c] of Object.entries(raw.colours as Record<string, { value: string; name?: string }>)) out.push(`- ${role}: ${c.name ?? ""} ${c.value}`.replace("  ", " "));
+  out.push("Palette:");
+  for (const c of raw.palette.colours as Array<{ id: string; name: string; value: string; group: string; tints: boolean }>) out.push(`- ${c.name} ${c.value} (${c.group}${c.tints ? ", with 10% and 25% tints" : ""})`);
+  if (raw.palette.rules?.text) out.push(`- Text colours from the guide: ${raw.palette.rules.text.join(", ")}`);
   out.push("");
-  out.push("Surfaces (every text pair here must pass AAA, 7 to 1):");
+  out.push("Colour schemes:");
+  for (const s of b.check.schemes ?? []) out.push(`- ${s.name}: ${s.usable ? "in use" : "not used until fixed"}${s.bookends ? ", opens and closes videos" : ""}`);
+  out.push("");
+  out.push("Contrast (every text pair here must pass AAA, 7 to 1):");
   for (const p of b.check.contrast) out.push(`- ${p.result.passesAAA ? "Passes" : "FAILS "} ${p.label}: ${p.result.ratioText} to 1${p.result.passesAAA ? "" : `. ${p.result.message}`}`);
   out.push("");
   out.push(`Colour pairs that pass AAA (${report.legalPairs.length}):`);

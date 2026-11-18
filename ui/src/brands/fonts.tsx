@@ -11,7 +11,7 @@ import { BoundNumber, DeleteFile, FilePicker, InlineError, Report, SubHead, Uplo
 
 /** Adding an open font, used from Fonts and from the guidelines suggestions. */
 export function useFontActions() {
-  const { id, edit, setFiles, setFontReport, setOpen } = useEditor();
+  const { id, edit, setFiles, setFontReport, go } = useEditor();
   const mergeFonts = (raw: any) =>
     edit((d) => {
       d.fonts = clone(raw.fonts);
@@ -27,8 +27,7 @@ export function useFontActions() {
     } catch (e) {
       setFontReport({ key: Date.now(), ok: false, text: `Error: ${(e as Error).message}`, warnings: [] });
     }
-    setOpen("sec-fonts", true);
-    requestAnimationFrame(() => document.getElementById("sec-fonts-h")?.scrollIntoView({ block: "start" }));
+    go("sec-type");
   }
   return { mergeFonts, useOpenFont };
 }

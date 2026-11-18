@@ -40,25 +40,48 @@ export interface EditorCtx {
   setOpen: (sectionId: string, open: boolean) => void;
   /** Open a section, bring its heading into view and give it focus. */
   go: (sectionId: string) => void;
+  /** The studio area on show ("overview", "colours", ...). */
+  area: string;
+  /** What the inspector shows: a colour or a scheme, or nothing (the area's defaults). */
+  selection: Selection;
+  select: (s: Selection) => void;
 }
+
+export type Selection = { kind: "colour"; id: string } | { kind: "scheme"; id: string } | null;
+
+/** The brand studio's areas, in bin order. */
+export const AREAS = [
+  { id: "overview", label: "Overview" },
+  { id: "guidelines", label: "Guidelines" },
+  { id: "colours", label: "Colours" },
+  { id: "motion", label: "Motion" },
+  { id: "type", label: "Type" },
+  { id: "logo", label: "Logo" },
+  { id: "icons", label: "Icons and graphics" },
+  { id: "voice", label: "Voice" },
+  { id: "writing", label: "Writing" },
+  { id: "checks", label: "Checks" },
+] as const;
+export type AreaId = (typeof AREAS)[number]["id"];
 
 export const EditorContext = createContext<EditorCtx | null>(null);
 export const useEditor = () => useContext(EditorContext)!;
 
 // Which section a check's field belongs to, for links from the checks and the error summary.
 const FIELD_SECTIONS: Array<[RegExp, string, string]> = [
-  [/^colours|^surfaces|^captions(?!\.weight)/, "sec-colours", "Colours"],
-  [/^fonts|^captions\.weight|^typeScale|^lineHeight|^letterSpacing|^spacing|^radius/, "sec-fonts", "Fonts"],
+  [/^palette|^schemes|^schemeUse|^colours|^surfaces|^captions(?!\.weight)/, "sec-colours", "Colours"],
+  [/^motion/, "sec-motion", "Motion"],
+  [/^fonts|^captions\.weight|^typeScale|^lineHeight|^letterSpacing|^spacing|^radius/, "sec-type", "Type"],
   [/^logo/, "sec-logo", "Logo"],
   [/^icons|^graphics/, "sec-icons", "Icons"],
   [/^voice/, "sec-voice", "Voice"],
   [/^toneOfVoice|^guidelines|^rules/, "sec-writing", "Writing"],
-  [/^provisional|^name|^id|^description/, "sec-about", "Name"],
+  [/^provisional|^name|^id|^description|^examples/, "sec-overview", "Overview"],
 ];
 
 export function sectionFor(field: string) {
   for (const [re, id, label] of FIELD_SECTIONS) if (re.test(field || "")) return { id, label };
-  return { id: "sec-about", label: "Brand" };
+  return { id: "sec-overview", label: "Overview" };
 }
 
 export function checkCounts(check: Check | null) {

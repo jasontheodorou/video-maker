@@ -27,8 +27,8 @@ export function panelCss(ctx: { sceneId: string }, maxWidth: string, pad: string
   const id = `#${ctx.sceneId}`;
   return `
 ${id} .content{display:flex;flex-direction:column;justify-content:${place.edge === "top" ? "flex-start" : "flex-end"};align-items:${place.side === "right" ? "flex-end" : "flex-start"}}
-${id} .panel{background:var(--dark-bg);color:var(--dark-text);padding:${pad};border-radius:var(--radius);max-width:${maxWidth}}
-${id} .panel .bar{width:var(--sp-10);height:var(--sp-1);background:var(--dark-accent);margin-bottom:var(--sp-3)}
+${id} .panel{background:var(--bg);color:var(--fg);padding:${pad};border-radius:var(--radius);max-width:${maxWidth}}
+${id} .panel .bar{width:var(--sp-10);height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-3)}
 ${id} .panel .text{font-size:${textSize}}`;
 }
 
@@ -75,7 +75,8 @@ export const photo: SceneDefinition<Slots> = {
   description:
     "A photo fills the frame, with an optional short line of text on a solid panel. Use it to show a real place, service or people. Text up to 48 characters. The photo must be in the brand's media folder; add a focus point [x, y] (0 to 1) if the subject is not in the middle.",
   beats: ["hook", "problem", "message", "insight", "proof", "summary"],
-  surface: "dark",
+  legacyScheme: "dark",
+  schemeNeed: "any",
   media: true,
   slots: Slots,
   text: [{ slot: "text", maxChars: 48, maxLines: { "16x9": 3, "9x16": 4, "1x1": 3 } }],
@@ -83,7 +84,7 @@ export const photo: SceneDefinition<Slots> = {
     photo: { src: "park-trail.jpg" },
     text: "Our parks are open every day",
   },
-  elements: (s) => (s.text ? [{ id: "panel", entrance: "rise", slot: "text" }] : []),
+  elements: (s) => (s.text ? [{ id: "panel", role: "body" as const, only: ["rise", "fade"] as const, entrance: "rise", slot: "text" }] : []),
   markup: (ctx) => {
     const m = ctx.photo(ctx.slots.photo);
     return `

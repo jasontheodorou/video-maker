@@ -1,74 +1,32 @@
 // Shared building blocks for both pages: the frame, headings, sections, cards, messages, fields,
 // empty states, skeletons and toasts. Read DESIGN.md before adding to this file.
 import { Button, MantineProvider, Skeleton } from "@mantine/core";
-import { CaretRight, CheckCircle, FilmSlate, Info, WarningCircle, Warning, CircleNotch, Clock, Prohibit, X } from "@phosphor-icons/react";
+import { CaretRight, CheckCircle, Info, WarningCircle, Warning, CircleNotch, Clock, Prohibit, X } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { theme } from "./theme";
-import { Collapse, MotionRoot, PageEnter, Pill, Reveal, duration, ease, spring, usePillId } from "./motion";
+import { Collapse, MotionRoot, Reveal, duration, ease, spring } from "./motion";
+import { TopBar } from "./studio";
 
 export const ICON = { size: 24, weight: "light" as const };
 
-const NAV = [
-  { key: "make", href: "/", label: "Make a video" },
-  { key: "brands", href: "/brands", label: "Brands" },
-  { key: "settings", href: "/settings", label: "Settings" },
-] as const;
-
-/** The top bar's links. A pill sits behind the current page and glides to whichever link you point at. */
-function TopNav({ current }: { current: "make" | "brands" }) {
-  const [hover, setHover] = useState<string | null>(null);
-  const pill = usePillId("nav");
-  const shown = hover ?? current;
-  return (
-    <nav className="topnav" aria-label="Main">
-      <ul onMouseLeave={() => setHover(null)}>
-        {NAV.map((n) => (
-          <li key={n.key}>
-            {shown === n.key ? <Pill layoutId={pill} className={`topnav__pill${n.key !== current ? " topnav__pill--hover" : ""}`} /> : null}
-            <a href={n.href} aria-current={current === n.key ? "page" : undefined} onMouseEnter={() => setHover(n.key)} onFocus={() => setHover(n.key)} onBlur={() => setHover(null)}>
-              {n.label}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-/** True once the page has scrolled, so the sticky top bar can show its hairline. */
-function useScrolled() {
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const on = () => setScrolled(window.scrollY > 4);
-    on();
-    window.addEventListener("scroll", on, { passive: true });
-    return () => window.removeEventListener("scroll", on);
-  }, []);
-  return scrolled;
-}
-
-/** The frame of every page: providers, skip link, sticky top bar, the 720px column, and the toaster. */
-export function Shell({ current, children, modals }: { current: "make" | "brands"; children: ReactNode; modals?: ReactNode }) {
-  const scrolled = useScrolled();
+/**
+ * A document-style frame inside the studio: top bar with workspace tabs, then one scrolling column.
+ * Kept for pages that are not yet split into studio regions. New views use <AppShell> from studio.tsx.
+ */
+export function Shell({ current, children, modals }: { current: "make" | "brands" | "videos"; children: ReactNode; modals?: ReactNode }) {
   return (
     <MantineProvider theme={theme}>
       <MotionRoot>
         <a className="skip-link" href="#main">
           Skip to main content
         </a>
-        <header className="topbar" data-scrolled={scrolled || undefined}>
-          <div className="container topbar__inner">
-            <a className="wordmark" href="/">
-              <FilmSlate size={28} weight="regular" aria-hidden="true" />
-              <span className="wordmark__text">Video maker</span>
-            </a>
-            <TopNav current={current} />
-          </div>
-        </header>
-        <main id="main" tabIndex={-1} className="container">
-          <PageEnter>{children}</PageEnter>
-        </main>
+        <div className="doc-shell">
+          <TopBar workspace={current} />
+          <main id="main" tabIndex={-1} className="container doc-shell__main">
+            {children}
+          </main>
+        </div>
         {modals}
         <Toaster />
       </MotionRoot>

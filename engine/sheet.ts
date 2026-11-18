@@ -3,23 +3,33 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getFormat, type FormatId } from "./config";
-import { ENTRANCES, STAGGER } from "./motion";
 import { getScene } from "./scenes";
-import { sceneTransitionSeconds } from "./transitions";
+import { sceneTransitionSeconds, sceneTransitionLead } from "./transitions";
+import { resolveMotion } from "./motion-plan";
+import { timelineFixed } from "./compile";
+import { UNDERLINE, EMPHASIS_FADE } from "./motion";
+import type { LoadedBrand } from "./brand";
 import { snapshotBuild } from "./render";
 import { screenshotFile } from "./browser";
 import { escapeHtml } from "./text";
 import type { Spec } from "./spec";
 import type { Timeline } from "./schema";
 
-/** The moment each scene is settled: all entrances done, before the next scene starts to cover it. */
-export function settledTimes(spec: Spec, timeline: Timeline): number[] {
+/**
+ * The moment each scene is settled: every entrance and text effect done (an underline drawn, a number counted up),
+ * before the next scene starts to cover it.
+ */
+export function settledTimes(spec: Spec, timeline: Timeline, brand: LoadedBrand | null = null): number[] {
+  const plan = resolveMotion(spec, brand, timeline.scenes.map((s) => s.scheme), timelineFixed(timeline));
   return timeline.scenes.map((s, i) => {
-    const def = getScene(s.type);
-    const els = def.elements(spec.scenes[i].slots as Record<string, unknown>);
-    const settled = s.enterAt + Math.max(0, ...els.map((e, k) => k * STAGGER + ENTRANCES[e.entrance].duration)) + 0.4;
+    const p = plan.scenes[i];
+    let done = Math.max(0, ...p.elements.map((e) => e.settled));
+    if (p.textEffect === "underline") done = Math.max(done, p.headlineSettled + UNDERLINE.delay + UNDERLINE.duration + UNDERLINE.gap * 2);
+    if (p.textEffect === "emphasis") done = Math.max(done, p.headlineSettled + EMPHASIS_FADE.delay + EMPHASIS_FADE.duration);
+    if (p.shape === "grow") done = Math.max(done, 0.8);
+    const settled = s.enterAt + done + 0.4;
     const next = timeline.scenes[i + 1];
-    const latest = s.duration - (next ? sceneTransitionSeconds(next, timeline.crossfade) : 0) - 0.1;
+    const latest = s.duration - (next ? sceneTransitionSeconds(next, timeline.crossfade) + sceneTransitionLead(next) : 0) - 0.1;
     // Prefer a moment when a caption is showing, so the sheet shows the caption style too.
     const want = Math.min(settled, latest);
     const abs = s.start + want;
@@ -44,8 +54,8 @@ export interface SheetResult {
   times: number[];
 }
 
-export async function makeContactSheet(spec: Spec, timeline: Timeline, buildDirs: Record<FormatId, string>, reviewDir: string, signal?: AbortSignal): Promise<SheetResult> {
-  const times = settledTimes(spec, timeline);
+export async function makeContactSheet(spec: Spec, timeline: Timeline, buildDirs: Record<FormatId, string>, reviewDir: string, signal?: AbortSignal, brand: LoadedBrand | null = null): Promise<SheetResult> {
+  const times = settledTimes(spec, timeline, brand);
   const stills = {} as Record<FormatId, string[]>;
   const formats = Object.keys(buildDirs) as FormatId[];
   for (const f of formats) {
@@ -75,7 +85,7 @@ export async function makeContactSheet(spec: Spec, timeline: Timeline, buildDirs
         .map((f) => `<img src="${path.relative(reviewDir, stills[f][i])}" style="width:${colW(f)}px;height:${rowH}px">`)
         .join("");
       const sc = spec.scenes[i];
-      return `<div class="row"><div class="label"><b>${i + 1}. ${escapeHtml(getScene(s.type).label)}</b><br>${escapeHtml(BEAT_WORDS[sc.beat] ?? sc.beat)}<br>${s.start.toFixed(1)} to ${(s.start + s.duration).toFixed(1)} seconds<br>Picture from ${times[i].toFixed(1)} seconds<br>${escapeHtml(LIMIT_WORDS[s.limitedBy] ?? "")}</div>${cells}</div>`;
+      return `<div class="row"><div class="label"><b>${i + 1}. ${escapeHtml(getScene(s.type).label)}</b><br>${escapeHtml(BEAT_WORDS[sc.beat] ?? sc.beat)}<br>${s.start.toFixed(1)} to ${(s.start + s.duration).toFixed(1)} seconds<br>Picture from ${times[i].toFixed(1)} seconds<br>${escapeHtml(LIMIT_WORDS[s.limitedBy] ?? "")}${s.scheme ? `<br>Colours: ${escapeHtml(brand?.scheme(s.scheme)?.name ?? s.scheme)}` : ""}${s.transitionIn !== "none" ? `<br>In: ${escapeHtml(s.transitionIn)}${s.textEffect && s.textEffect !== "none" ? `, ${escapeHtml(s.textEffect)}` : ""}` : ""}</div>${cells}</div>`;
     })
     .join("");
   const head = formats.map((f) => `<div style="width:${colW(f)}px">${escapeHtml(getFormat(f).label)}</div>`).join("");

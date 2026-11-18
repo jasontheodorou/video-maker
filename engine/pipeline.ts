@@ -14,7 +14,7 @@ import { mixTrack, writeWav } from "./wav";
 import { toSrt } from "./captions";
 import { captionFitter } from "./captionfit";
 import { compileVideo, writePage } from "./compile";
-import { hyperframesLint, textFitCheck, timingCheck, writeLintReport, type LintFinding } from "./lint";
+import { hyperframesLint, textFitCheck, timingCheck, motionCheck, writeLintReport, type LintFinding } from "./lint";
 import { makeContactSheet, type SheetResult } from "./sheet";
 import { renderBuild, probe } from "./render";
 import { retainBrowser, releaseBrowser } from "./browser";
@@ -140,7 +140,7 @@ interface PhraseManifestEntry {
  */
 export async function stepPreflight(ctx: JobContext, report?: Report): Promise<void> {
   report?.("size", "progress", "Checking the text fits each format before recording the voice", 0.9);
-  const findings = await textFitCheck(ctx.spec, ctx.brand, null, ctx.formats, path.join(ctx.job.review, "fit"), ctx.signal);
+  const findings = [...motionCheck(ctx.spec, null, ctx.brand).filter((f) => f.level === "error"), ...(await textFitCheck(ctx.spec, ctx.brand, null, ctx.formats, path.join(ctx.job.review, "fit"), ctx.signal))];
   stopIfAsked(ctx, "size");
   const errors = findings.filter((f) => f.level === "error");
   if (errors.length) {
@@ -227,7 +227,7 @@ export function stepTiming(ctx: JobContext, report?: Report): Timeline {
       byScene,
       decision,
       { id: aligned[0]?.voice ?? "", speed: ctx.brand.brand.voice.speed, file: voiceRel, sampleRate },
-      { captionFits: captionFitter(ctx.brand, specFormats(ctx.spec) as FormatId[]) },
+      { captionFits: captionFitter(ctx.brand, specFormats(ctx.spec) as FormatId[]), brand: ctx.brand },
     );
   } catch (e) {
     report?.("timing", "error", (e as Error).message);
@@ -280,6 +280,7 @@ export async function stepLint(ctx: JobContext, report?: Report): Promise<LintFi
   findings.push(...(await textFitCheck(ctx.spec, ctx.brand, timeline, ctx.formats, path.join(ctx.job.review, "fit"), ctx.signal)));
   stopIfAsked(ctx, "lint");
   findings.push(...timingCheck(timeline, loadConfig().captions.minSeconds));
+  findings.push(...motionCheck(ctx.spec, timeline, ctx.brand));
   writeLintReport(path.join(ctx.job.review, "lint.json"), findings);
   const errors = findings.filter((x) => x.level === "error");
   if (errors.length) {
@@ -296,7 +297,7 @@ export async function stepSheet(ctx: JobContext, report?: Report): Promise<Sheet
   report?.("sheet", "start", "Making the contact sheet");
   const timeline = loadTimeline(ctx);
   const dirs = Object.fromEntries(ctx.formats.map((f) => [f, path.join(ctx.job.build, f)])) as Record<FormatId, string>;
-  const res = await makeContactSheet(ctx.spec, timeline, dirs, ctx.job.review, ctx.signal);
+  const res = await makeContactSheet(ctx.spec, timeline, dirs, ctx.job.review, ctx.signal, ctx.brand);
   stopIfAsked(ctx, "sheet");
   report?.("sheet", "done", "Contact sheet ready");
   return res;

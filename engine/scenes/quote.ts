@@ -20,7 +20,7 @@ const css = (ctx: SceneContext<Slots>, o: { mark: number; layout: "side" | "top"
   return `
 ${id} .content{display:flex;align-items:safe center}
 ${id} .q{display:flex;${side ? "flex-direction:row;gap:var(--sp-6);align-items:flex-start" : "flex-direction:column;gap:var(--sp-4)"};width:100%}
-${id} .mark{flex:none;width:${o.mark}px;height:${Math.round(o.mark * 0.774)}px;color:var(--tint-accent)${side ? ";margin-top:var(--sp-2)" : ""}}
+${id} .mark{flex:none;width:${o.mark}px;height:${Math.round(o.mark * 0.774)}px;color:var(--hl)${side ? ";margin-top:var(--sp-2)" : ""}}
 ${id} .body{flex:1;min-width:0;max-width:1480px}
 ${id} .quote{font-size:${o.quote}}
 ${id} .name{margin-top:${o.gap};font-weight:var(--weight-heading)}`;
@@ -32,7 +32,8 @@ export const quote: SceneDefinition<Slots> = {
   description:
     "Words from a real person, such as a resident or a member of staff, with their name and role. Use it for proof. Quote up to 104 characters without quotation marks, name up to 36, role up to 50. Only quote what the person really said.",
   beats: ["proof", "insight", "problem", "summary"],
-  surface: "tint",
+  legacyScheme: "tint",
+  schemeNeed: "prefer-pale",
   slots: Slots,
   text: [
     { slot: "quote", maxChars: 104, maxLines: { "16x9": 4, "9x16": 7, "1x1": 5 } },
@@ -45,10 +46,10 @@ export const quote: SceneDefinition<Slots> = {
     role: "Resident, Eastbrook ward",
   },
   elements: (s) => [
-    { id: "mark", entrance: "fade" },
-    { id: "quote", entrance: "rise", slot: "quote" },
-    { id: "name", entrance: "riseSmall", slot: "name" },
-    ...(s.role ? [{ id: "role", entrance: "riseSmall" as const, slot: "role" }] : []),
+    { id: "mark", role: "accent" as const, entrance: "fade" },
+    { id: "quote", role: "headline" as const, entrance: "rise", slot: "quote" },
+    { id: "name", role: "body" as const, entrance: "riseSmall", slot: "name" },
+    ...(s.role ? [{ id: "role", role: "body" as const, entrance: "riseSmall" as const, slot: "role" }] : []),
   ],
   markup: (ctx) => {
     const s = ctx.slots;

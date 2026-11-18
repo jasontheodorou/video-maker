@@ -18,9 +18,9 @@ const css = (ctx: SceneContext<Slots>, o: { value: string; gap: string; align: "
   const centre = o.align === "center";
   return `
 ${id} .content{display:flex;flex-direction:column;justify-content:center;${centre ? "align-items:center;text-align:center" : ""}}
-${id} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--tint-accent);margin-bottom:var(--sp-4)}
-${id} .kicker{color:var(--tint-accent);margin-bottom:var(--sp-2)}
-${id} .value{font-family:var(--font-heading);font-weight:var(--weight-heading);font-size:${o.value};line-height:1.05;letter-spacing:var(--ls-display);color:var(--tint-accent);white-space:nowrap;font-variant-numeric:lining-nums tabular-nums}
+${id} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-4)}
+${id} .kicker{color:var(--hl);margin-bottom:var(--sp-2)}
+${id} .value{font-family:var(--font-heading);font-weight:var(--weight-heading);font-size:${o.value};line-height:1.05;letter-spacing:var(--ls-display);color:var(--hl);white-space:nowrap;font-variant-numeric:lining-nums tabular-nums}
 ${id} .label{margin-top:${o.gap};font-size:calc(var(--t-heading) * 0.85)}
 ${id} .source{margin-top:var(--sp-5);font-weight:var(--weight-body)}`;
 };
@@ -31,7 +31,8 @@ export const stat: SceneDefinition<Slots> = {
   description:
     "One big number and what it means, such as 93% or 1 in 4, with an optional source. Use it for proof. Value up to 8 characters, label up to 64, source up to 70. Write the number as people say it.",
   beats: ["proof", "insight", "problem", "message", "summary"],
-  surface: "tint",
+  legacyScheme: "tint",
+  schemeNeed: "prefer-pale",
   slots: Slots,
   text: [
     { slot: "kicker", maxChars: 28, maxLines: { "16x9": 1, "9x16": 1, "1x1": 1 } },
@@ -45,11 +46,11 @@ export const stat: SceneDefinition<Slots> = {
     source: "Northvale resident survey, 2026",
   },
   elements: (s) => [
-    { id: "bar", entrance: "fade" },
-    ...(s.kicker ? [{ id: "kicker", entrance: "riseSmall" as const, slot: "kicker" }] : []),
-    { id: "value", entrance: "riseLarge", slot: "value" },
-    { id: "label", entrance: "rise", slot: "label" },
-    ...(s.source ? [{ id: "source", entrance: "riseSmall" as const, slot: "source" }] : []),
+    { id: "bar", role: "accent" as const, entrance: "fade" },
+    ...(s.kicker ? [{ id: "kicker", role: "eyebrow" as const, entrance: "riseSmall" as const, slot: "kicker" }] : []),
+    { id: "value", role: "value" as const, entrance: "riseLarge", slot: "value" },
+    { id: "label", role: "body" as const, entrance: "rise", slot: "label" },
+    ...(s.source ? [{ id: "source", role: "body" as const, entrance: "riseSmall" as const, slot: "source" }] : []),
   ],
   markup: (ctx) => {
     const s = ctx.slots;

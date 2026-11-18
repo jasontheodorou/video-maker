@@ -42,7 +42,7 @@ ${id} .content{display:flex;flex-direction:column;justify-content:center}
 ${id} .heading{margin-bottom:${o.gapHead}${list ? "" : ";text-align:center;align-self:center;max-width:1300px"}}
 ${id} .grid{display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:${o.gapCells};width:100%}
 ${id} .cell{display:flex;${list ? "flex-direction:row;align-items:center;gap:var(--sp-5)" : "flex-direction:column;align-items:center;text-align:center;gap:var(--sp-3)"}}
-${id} .ic{flex:none;width:${o.icon}px;height:${o.icon}px;border-radius:50%;background:var(--tint-bg);color:var(--light-accent);padding:${o.pad}px}
+${id} .ic{flex:none;width:${o.icon}px;height:${o.icon}px;border-radius:50%;background:var(--shape);color:var(--icon);padding:${o.pad}px}
 ${id} .label{font-weight:var(--weight-heading);text-wrap:balance${list ? ";flex:1;min-width:0" : ";width:100%"}}`;
 };
 
@@ -52,7 +52,9 @@ export const iconrow: SceneDefinition<Slots> = {
   description:
     "2 to 4 icons, each with a short label, and an optional heading. Use it to show options, services or things to bring at a glance. Labels up to 26 characters (22 when there are 4 icons; 2 to 4 words is best), heading up to 48.",
   beats: ["message", "insight", "proof", "summary", "action"],
-  surface: "light",
+  legacyScheme: "light",
+  schemeNeed: "any",
+  hasShape: () => true,
   slots: Slots,
   text: [
     { slot: "heading", maxChars: 48, maxLines: { "16x9": 2, "9x16": 3, "1x1": 3 } },
@@ -67,8 +69,8 @@ export const iconrow: SceneDefinition<Slots> = {
     ],
   },
   elements: (s) => [
-    ...(s.heading ? [{ id: "heading", entrance: "rise" as const, slot: "heading" }] : []),
-    ...s.items.map((it, i) => ({ id: `item${i + 1}`, entrance: "rise" as const, slot: "items", text: it.label })),
+    ...(s.heading ? [{ id: "heading", role: "headline" as const, entrance: "rise" as const, slot: "heading" }] : []),
+    ...s.items.map((it, i) => ({ id: `item${i + 1}`, role: "item" as const, entrance: "rise" as const, slot: "items", text: it.label })),
   ],
   markup: (ctx) => {
     const s = ctx.slots;

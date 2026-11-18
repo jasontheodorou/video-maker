@@ -9,7 +9,8 @@ import { KOKORO_VOICES, sceneCatalogue, loadConfig, FORMAT_IDS, checkContrast, s
 import { synthesise, voiceLang } from "../engine/voice";
 import { interpreterSettings } from "../engine/interpret";
 import { HttpError, sendJson, readJson, sendFile, safeJoin, readMultipart } from "./http";
-import { JobQueue, jobView, jobDir, STAGES } from "./jobs";
+import { JobQueue, jobView, jobDir, STAGES, scenePreview, lookCheck } from "./jobs";
+import { STYLES, ENTRANCES, TRANSITIONS, TEXT_EFFECTS, SHAPE_MOTIONS } from "../engine/motion-rules";
 import * as brands from "./brands";
 import { proposeSurfaces } from "../engine/brand/index";
 import { readGuidelines } from "./guidelines";
@@ -47,7 +48,19 @@ const page = (name: "index" | "brands"): string => {
 };
 let warnedNoBuild = false;
 route("GET", "/", (req, res) => sendFile(req, res, page("index")));
-route("GET", "/brands", (req, res) => sendFile(req, res, page("brands")));
+// The studio app is one page with its own router: /make, /v/:id, /videos and /brands/... all serve it.
+// (Until the single-page build exists, /brands still serves the older brands page.)
+const appPage = (): string => {
+  const built = path.join(UI, "index.html");
+  return fs.existsSync(built) ? built : page("index");
+};
+route("GET", "/brands", (req, res) => sendFile(req, res, fs.existsSync(path.join(UI, "brands.html")) || !fs.existsSync(path.join(UI, "index.html")) ? page("brands") : appPage(), { cache: "no-cache" }));
+for (const p of ["/make", "/make/*", "/v/*", "/videos", "/videos/*", "/brands/*"]) {
+  route("GET", p, (req, res) => {
+    if (!/text\/html/.test(String(req.headers.accept ?? ""))) throw new HttpError(404, "Page not found.");
+    sendFile(req, res, appPage(), { cache: "no-cache" });
+  });
+}
 route("GET", "/assets/*", (req, res, [rel]) => sendFile(req, res, safeJoin(path.join(UI, "assets"), rel), { cache: "public, max-age=31536000, immutable" }));
 route("GET", "/classic", (req, res) => sendFile(req, res, path.join(WEB, "index.html")));
 route("GET", "/classic/brands", (req, res) => sendFile(req, res, path.join(WEB, "brands.html")));
@@ -80,6 +93,17 @@ route("GET", "/api/meta", (_req, res) => {
     formats: FORMAT_IDS.map((f) => ({ id: f, label: cfg.formats[f].label, width: cfg.formats[f].width, height: cfg.formats[f].height })),
     sizes: cfg.sizes,
     scenes: sceneCatalogue().map((sc) => ({ ...sc, required: requiredSlots()[sc.type] ?? [] })),
+    lengths: [
+      { id: "auto", label: "Auto" },
+      ...(["short", "medium", "long"] as const).map((id) => ({ id, label: id[0].toUpperCase() + id.slice(1), min: cfg.sizes[id].minSeconds, max: cfg.sizes[id].maxSeconds })),
+    ],
+    motion: {
+      styles: STYLES,
+      entrances: ENTRANCES,
+      transitions: TRANSITIONS.map((t) => ({ id: t.id, label: t.label, seconds: t.seconds, nextToMedia: t.nextToMedia })),
+      textEffects: TEXT_EFFECTS,
+      shapes: SHAPE_MOTIONS,
+    },
     stages: STAGES,
     interpreter: { backend: s.backend, model: s.model },
   });
@@ -126,7 +150,15 @@ route("POST", "/api/jobs", async (req, res) => {
       if (!/\.(mp4|mov|m4v|webm)$/i.test(f.name) && f.data.length > 30_000_000) throw new HttpError(413, `${f.name} is larger than 30 MB. Use a smaller photo.`);
       return { name: f.name, data: f.data, description: descriptions[i] };
     });
-  const rec = queue.create({ brief: one("brief"), brand: one("brand") || "demo", voice: one("voice") || undefined, formats: formats.length ? formats : [...FORMAT_IDS], media });
+  const rec = queue.create({
+    brief: one("brief"),
+    brand: one("brand") || "demo",
+    voice: one("voice") || undefined,
+    formats: formats.length ? formats : [...FORMAT_IDS],
+    size: one("size") || undefined,
+    look: one("look") || undefined,
+    media,
+  });
   sendJson(res, 201, jobView(queue, rec.id));
 });
 
@@ -134,8 +166,20 @@ route("GET", "/api/jobs/:id", (_req, res, [id]) => sendJson(res, 200, jobView(qu
 
 route("PUT", "/api/jobs/:id/spec", async (req, res, [id]) => {
   const b = await readJson<{ spec?: unknown }>(req);
-  await queue.rerender(id, b.spec);
-  sendJson(res, 200, jobView(queue, id));
+  const r = await queue.rerender(id, b.spec);
+  sendJson(res, 200, { ...jobView(queue, id), remake: r.remake });
+});
+
+// A still of one scene in a given scheme (the Look tab's preview). scene: 0-based index or scene id.
+route("POST", "/api/jobs/:id/scene-preview", async (req, res, [id]) => {
+  const b = await readJson<{ scene?: unknown; scheme?: unknown; format?: unknown; spec?: unknown }>(req);
+  sendJson(res, 200, scenePreview(id, b, brands.PREVIEW_ROOT));
+});
+
+// Problems with a script's look choices (schemes, motion) before remaking.
+route("POST", "/api/jobs/:id/look-check", async (req, res, [id]) => {
+  const b = await readJson<{ spec?: unknown }>(req);
+  sendJson(res, 200, lookCheck(id, b));
 });
 
 route("POST", "/api/jobs/:id/stop", (_req, res, [id]) => {
@@ -220,8 +264,26 @@ route("POST", "/api/brands/:id/check", async (req, res, [id]) => {
 });
 
 route("POST", "/api/brands/:id/preview", async (req, res, [id]) => {
-  const b = await readJson<{ brand?: unknown; caption?: string }>(req);
-  sendJson(res, 200, await brands.previewDraft(id, b.brand, { caption: b.caption }));
+  const b = await readJson<{ brand?: unknown; caption?: string; scenes?: unknown; formats?: unknown; scheme?: unknown }>(req);
+  sendJson(res, 200, await brands.previewDraft(id, b.brand, { caption: b.caption, scenes: b.scenes, formats: b.formats, scheme: b.scheme }));
+});
+
+// Suggested colour schemes from the palette and the guide's colour rules. Nothing is saved.
+route("POST", "/api/brands/:id/schemes/recommend", async (req, res, [id]) => {
+  const b = await readJson<{ brand?: unknown; useRules?: boolean; limit?: number; includeExisting?: boolean }>(req);
+  sendJson(res, 200, brands.recommend(id, b));
+});
+
+// One live still of a scene in a scheme, for the scheme cards. Colours are CSS variables the app can change in place.
+route("POST", "/api/brands/:id/schemes/preview", async (req, res, [id]) => {
+  const b = await readJson<{ brand?: unknown; scheme?: unknown; scene?: unknown; format?: unknown }>(req);
+  sendJson(res, 200, brands.schemePreview(id, b));
+});
+
+// A short looping preview of a motion style, entrance, transition, text effect or shape motion.
+route("POST", "/api/brands/:id/motion/preview", async (req, res, [id]) => {
+  const b = await readJson<{ brand?: unknown; kind?: unknown; id?: unknown; scheme?: unknown; format?: unknown }>(req);
+  sendJson(res, 200, await brands.motionPreview(id, b));
 });
 
 // Upload a font, logo, icon, graphic or guidelines document. The file is saved and brand.json updated at once.

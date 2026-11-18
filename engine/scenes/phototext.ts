@@ -46,7 +46,7 @@ const layout = (ctx: SceneContext<Slots>, o: { heading: string; gap: string }) =
   return `${box}
 ${fit}
 ${area}
-${id} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--light-accent);margin-bottom:var(--sp-4)}
+${id} .bar{width:var(--sp-12);height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-4)}
 ${id} .heading{font-size:${o.heading}}
 ${id} .text{margin-top:${o.gap}}`;
 };
@@ -57,7 +57,8 @@ export const phototext: SceneDefinition<Slots> = {
   description:
     "A photo beside a heading and an optional line of text. Use it when a picture helps explain the message. Heading up to 42 characters, text up to 90. The photo must be in the brand's media folder; add a focus point [x, y] (0 to 1) if the subject is not in the middle.",
   beats: ["problem", "message", "insight", "proof", "summary"],
-  surface: "light",
+  legacyScheme: "light",
+  schemeNeed: "any",
   media: true,
   slots: Slots,
   text: [
@@ -70,9 +71,9 @@ export const phototext: SceneDefinition<Slots> = {
     text: "Join at any Northvale library. Bring proof of your address.",
   },
   elements: (s) => [
-    { id: "bar", entrance: "fade" },
-    { id: "heading", entrance: "rise", slot: "heading" },
-    ...(s.text ? [{ id: "text", entrance: "rise" as const, slot: "text" }] : []),
+    { id: "bar", role: "accent" as const, entrance: "fade" },
+    { id: "heading", role: "headline" as const, entrance: "rise", slot: "heading" },
+    ...(s.text ? [{ id: "text", role: "body" as const, entrance: "rise" as const, slot: "text" }] : []),
   ],
   markup: (ctx) => {
     const s = ctx.slots;

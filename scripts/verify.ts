@@ -10,12 +10,11 @@ import path from "node:path";
 import { openJob, loadTimeline } from "../engine/pipeline";
 import { probe, renderBuild } from "../engine/render";
 import { loadConfig, type FormatId } from "../engine/config";
-import { getScene } from "../engine/scenes";
-import { ENTRANCES, STAGGER } from "../engine/motion";
 import { settledTimes } from "../engine/sheet";
 import { sceneTransitionSeconds } from "../engine/transitions";
 import { run, runOk } from "../engine/proc";
 import { parseArgs, jobArg, main } from "./cli";
+import { schedule } from "./motion-schedule";
 
 async function frameHashes(file: string, from?: number, to?: number): Promise<string[]> {
   const args = ["-v", "error"];
@@ -35,17 +34,15 @@ main(async () => {
   const problems: string[] = [];
   const report: Record<string, unknown> = { job: ctx.job.name, duration: timeline.duration, fps: cfg.fps, formats: {} };
 
-  // Motion windows: every entrance and crossfade, in absolute seconds.
-  const windows: Array<[number, number, string]> = [];
-  timeline.scenes.forEach((s, i) => {
-    const def = getScene(s.type);
-    const els = def.elements(ctx.spec.scenes[i].slots as Record<string, unknown>);
-    els.forEach((e, k) => {
-      const a = s.start + s.enterAt + k * STAGGER;
-      windows.push([a, a + ENTRANCES[e.entrance].duration, `${s.id} ${e.id} entrance`]);
-    });
-    if (s.transitionIn !== "none") windows.push([s.start, s.start + sceneTransitionSeconds(s, timeline.crossfade), `${s.id} ${s.transitionIn}`]);
-  });
+  // Motion windows: every eased movement the compiled page schedules (entrances, transitions, text effects), in
+  // absolute seconds. Read per format, from build/<format>/index.html.
+  const windowsFor = (f: FormatId): Array<[number, number, string]> => {
+    const file = path.join(ctx.job.build, f, "index.html");
+    if (!fs.existsSync(file)) return [];
+    return schedule(fs.readFileSync(file, "utf8"))
+      .filter((w) => w.kind === "smooth")
+      .map((w) => [w.a, w.b, w.label] as [number, number, string]);
+  };
 
   for (const f of ctx.formats as FormatId[]) {
     const file = path.join(ctx.job.out, `${ctx.job.name}-${f}.mp4`);
@@ -63,7 +60,7 @@ main(async () => {
     const hashes = await frameHashes(file);
     let dupes = 0;
     const dupeDetail: string[] = [];
-    for (const [a, b, label] of windows) {
+    for (const [a, b, label] of windowsFor(f)) {
       const i0 = Math.ceil(a * cfg.fps) + 1;
       const i1 = Math.floor(b * cfg.fps) - 2;
       for (let i = i0 + 1; i <= i1 && i < hashes.length; i++) {
@@ -77,7 +74,7 @@ main(async () => {
     const dir = path.join(ctx.job.review, "frames", f);
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
-    const times = [...settledTimes(ctx.spec, timeline), ...timeline.scenes.filter((s) => s.transitionIn !== "none").map((s) => s.start + sceneTransitionSeconds(s, timeline.crossfade) / 2)];
+    const times = [...settledTimes(ctx.spec, timeline, ctx.brand), ...timeline.scenes.filter((s) => s.transitionIn !== "none").map((s) => s.start + sceneTransitionSeconds(s, timeline.crossfade) / 2)];
     for (const t of times) await runOk("ffmpeg", ["-v", "error", "-y", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", path.join(dir, `at-${t.toFixed(2)}s.png`)]);
     r.framesDir = path.relative(ctx.job.dir, dir);
     (report.formats as Record<string, unknown>)[f] = r;

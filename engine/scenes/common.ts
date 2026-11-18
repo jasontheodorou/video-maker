@@ -85,7 +85,7 @@ export function checkFullList(items: Array<Record<string, unknown>>, key: string
   });
 }
 
-/** A small filled marker for list items without an icon. Coloured by the surface accent. */
+/** A small filled marker for list items without an icon. Coloured by the scheme highlight. */
 export const DOT = `<span class="dot" aria-hidden="true"></span>`;
 
 /**

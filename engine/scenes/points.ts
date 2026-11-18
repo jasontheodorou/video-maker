@@ -32,12 +32,12 @@ const css = (ctx: SceneContext<Slots>, o: { gapHead: string; gapItems: string; i
   const id = `#${ctx.sceneId}`;
   return `
 ${id} .content{display:flex;flex-direction:column;justify-content:center}
-${id} .bar{width:${o.barW};height:var(--sp-1);background:var(--light-accent);margin-bottom:var(--sp-4)}
-${id} .kicker{color:var(--light-accent);margin-bottom:var(--sp-2)}
+${id} .bar{width:${o.barW};height:var(--sp-1);background:var(--hl);margin-bottom:var(--sp-4)}
+${id} .kicker{color:var(--hl);margin-bottom:var(--sp-2)}
 ${id} .items{list-style:none;display:flex;flex-direction:column;gap:${o.gapItems};margin-top:${o.gapHead}}
 ${id} .item{display:flex;align-items:center;gap:var(--sp-4)}
-${id} .item .dot{color:var(--light-accent)}
-${id} .item .ic{flex:none;width:${o.icon}px;height:${o.icon}px;border-radius:50%;background:var(--tint-bg);color:var(--light-accent);padding:${o.iconPad}px}
+${id} .item .dot{color:var(--hl)}
+${id} .item .ic{flex:none;width:${o.icon}px;height:${o.icon}px;border-radius:50%;background:var(--shape);color:var(--icon);padding:${o.iconPad}px}
 ${id} .item-text{flex:1;min-width:0}`;
 };
 
@@ -47,7 +47,9 @@ export const points: SceneDefinition<Slots> = {
   description:
     "A short heading and 2 to 4 points, each with an optional icon. Use it for steps, options, or what changes. Heading up to 48 characters, each point up to 40, or 24 when there are 4 points (shorter reads better). Give every point an icon or none.",
   beats: ["message", "problem", "insight", "proof", "summary", "action"],
-  surface: "light",
+  legacyScheme: "light",
+  schemeNeed: "any",
+  hasShape: (s) => s.items.some((i) => Boolean(i.icon)),
   slots: Slots,
   text: [
     { slot: "kicker", maxChars: 28, maxLines: { "16x9": 1, "9x16": 1, "1x1": 1 } },
@@ -63,10 +65,10 @@ export const points: SceneDefinition<Slots> = {
     ],
   },
   elements: (s) => [
-    { id: "bar", entrance: "fade" },
-    ...(s.kicker ? [{ id: "kicker", entrance: "riseSmall" as const, slot: "kicker" }] : []),
-    { id: "heading", entrance: "rise", slot: "heading" },
-    ...s.items.map((it, i) => ({ id: `item${i + 1}`, entrance: "rise" as const, slot: "items", text: it.text })),
+    { id: "bar", role: "accent" as const, entrance: "fade" },
+    ...(s.kicker ? [{ id: "kicker", role: "eyebrow" as const, entrance: "riseSmall" as const, slot: "kicker" }] : []),
+    { id: "heading", role: "headline" as const, entrance: "rise", slot: "heading" },
+    ...s.items.map((it, i) => ({ id: `item${i + 1}`, role: "item" as const, entrance: "rise" as const, slot: "items", text: it.text })),
   ],
   markup: (ctx) => {
     const s = ctx.slots;

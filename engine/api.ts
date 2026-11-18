@@ -5,8 +5,11 @@ import path from "node:path";
 import { z } from "zod";
 import { BRANDS_DIR, JOBS_DIR, jobPaths } from "./paths";
 import { loadConfig, FORMAT_IDS, type FormatId } from "./config";
-import { BrandSchema, type Brand } from "./schema";
-import { loadBrand, inspectBrand, listBrands, brandDir, type LoadedBrand, type BrandIssue, type ContrastPair } from "./brand";
+import { type Brand, type Scheme } from "./schema";
+import { loadBrand, inspectBrand, listBrands, brandDir, safeParseBrand, type LoadedBrand, type BrandIssue, type ContrastPair, type SchemeStatus } from "./brand";
+import { migrateBrand } from "./brand/migrate";
+import { assignSchemes } from "./schemes";
+import { resolveMotion } from "./motion-plan";
 import { SpecSchema, type Spec } from "./spec";
 import { SCENES, sceneCatalogue, getScene } from "./scenes";
 import { compileStill, writePage } from "./compile";
@@ -19,7 +22,10 @@ import { decideSize } from "./size";
 export { makeVideo, prepareJob, STEPS, PipelineError, StoppedError, type MakeOptions, type MakeResult, type ProgressEvent, type OnProgress, type StepName } from "./pipeline";
 export { checkContrast, contrastRatio, suggestPassingColour, AAA } from "./contrast";
 export { listMedia, mediaManifest, PhotoRef, ClipRef, MEDIA_DIR, PHOTO_EXT, CLIP_EXT, type MediaInfo } from "./media";
-export { chooseTransition } from "./transitions";
+export { assignSchemes, bookendScheme, type SchemeAssignment, type SchemeChoice } from "./schemes";
+export { resolveMotion, type MotionPlan, type SceneMotionPlan, type MotionProblem } from "./motion-plan";
+export { migrateBrand } from "./brand/migrate";
+export { safeParseBrand, type SchemeStatus } from "./brand";
 export { listBrands, loadBrand, sceneCatalogue, listIcons, KOKORO_VOICES, decideSize, loadConfig, FORMAT_IDS };
 export type { Spec, Brand, LoadedBrand, BrandIssue, ContrastPair, FormatId };
 // Icon library and brand module (create, update, files, fonts, import, guidelines). See CONTRACTS.md sections 4 and 8.
@@ -33,11 +39,35 @@ export interface Issue {
   message: string;
 }
 
-/** Check a spec without throwing. Use before makeVideo to show problems to a person. */
-export function validateSpec(raw: unknown): { ok: true; spec: Spec; issues: [] } | { ok: false; issues: Issue[] } {
+/**
+ * Check a spec without throwing. Use before makeVideo to show problems to a person. With a brand, also checks
+ * that each scene's scheme can be used and that each scene's own motion choices are allowed.
+ */
+export function validateSpec(raw: unknown, brand?: LoadedBrand): { ok: true; spec: Spec; issues: [] } | { ok: false; issues: Issue[] } {
   const r = SpecSchema.safeParse(raw);
-  if (r.success) return { ok: true, spec: r.data, issues: [] };
-  return { ok: false, issues: r.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) };
+  if (!r.success) return { ok: false, issues: r.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) };
+  if (!brand) return { ok: true, spec: r.data, issues: [] };
+  const issues = lookIssues(r.data, brand);
+  return issues.length ? { ok: false, issues } : { ok: true, spec: r.data, issues: [] };
+}
+
+/** Scheme and motion problems in a valid spec, for a brand. Paths: scenes.<i>.scheme, scenes.<i>.motion.<part>, look.scheme. */
+export function lookIssues(spec: Spec, brand: LoadedBrand): Issue[] {
+  const issues: Issue[] = [];
+  const usable = new Set(brand.usableSchemes().map((s) => s.id));
+  if (spec.look?.scheme && !usable.has(spec.look.scheme))
+    issues.push({ path: "look.scheme", message: `The scheme ${brand.scheme(spec.look.scheme)?.name ?? spec.look.scheme} is not in use in this brand.` });
+  let schemes: string[] = [];
+  try {
+    const a = assignSchemes(spec, brand);
+    for (const e of a.errors) issues.push({ path: `scenes.${e.scene}.scheme`, message: e.message });
+    schemes = a.scenes.map((c) => c.scheme);
+  } catch (e) {
+    issues.push({ path: "brand", message: (e as Error).message });
+  }
+  const motion = resolveMotion(spec, brand, schemes);
+  for (const p of motion.problems) issues.push({ path: p.field === "look.motionStyle" ? "look.motionStyle" : `scenes.${p.scene}.${p.field}`, message: p.message });
+  return issues;
 }
 
 /** The JSON Schema of the spec, for a brief interpreter that uses structured output. */
@@ -55,21 +85,23 @@ export interface BrandCheck {
   issues: BrandIssue[];
   /** Every text colour pairing with its AAA result and a plain-English message. */
   contrast: ContrastPair[];
+  /** Each scheme: whether it can be used, can open and close videos, its tone and CSS values. */
+  schemes?: SchemeStatus[];
 }
 
-/** Check brand JSON (an object) against a folder of brand files. Never throws. */
+/** Check brand JSON (an object, version 1 or 2) against a folder of brand files. Never throws. */
 export function validateBrand(raw: unknown, dir: string): BrandCheck {
-  const r = BrandSchema.safeParse(raw);
-  if (!r.success) {
+  const r = safeParseBrand(raw);
+  if (!r.success || !r.data) {
     return {
       ok: false,
-      issues: r.error.issues.map((i) => ({ level: "error" as const, field: i.path.join("."), message: i.message })),
+      issues: r.issues.map((i) => ({ level: "error" as const, field: i.path, message: i.message })),
       contrast: [],
     };
   }
   try {
     const b = inspectBrand(r.data, dir);
-    return { ok: b.ok, brand: r.data, issues: b.issues, contrast: b.contrast };
+    return { ok: b.ok, brand: r.data, issues: b.issues, contrast: b.contrast, schemes: b.schemes() };
   } catch (e) {
     return { ok: false, brand: r.data, issues: [{ level: "error", field: "brand", message: (e as Error).message }], contrast: [] };
   }
@@ -81,13 +113,14 @@ export function validateBrand(raw: unknown, dir: string): BrandCheck {
  * the returned check lists them so the web app can show them.
  */
 export function saveBrand(raw: unknown, opts: { dir?: string } = {}): BrandCheck & { file?: string } {
-  const r = BrandSchema.safeParse(raw);
-  if (!r.success) return validateBrand(raw, opts.dir ?? BRANDS_DIR);
+  const r = safeParseBrand(raw);
+  if (!r.success || !r.data) return validateBrand(raw, opts.dir ?? BRANDS_DIR);
   const dir = path.resolve(opts.dir ?? path.join(BRANDS_DIR, r.data.id));
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "brand.json");
-  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + "\n");
-  return { ...validateBrand(raw, dir), file };
+  // Always written as version 2.
+  fs.writeFileSync(file, JSON.stringify(r.raw, null, 2) + "\n");
+  return { ...validateBrand(r.raw, dir), file };
 }
 
 /**
@@ -100,7 +133,7 @@ export function scaffoldBrand(id: string, name: string, from = "demo"): BrandChe
   const dest = path.join(BRANDS_DIR, id);
   if (fs.existsSync(dest)) throw new Error(`A brand called ${id} already exists`);
   fs.cpSync(src, dest, { recursive: true });
-  const raw = JSON.parse(fs.readFileSync(path.join(dest, "brand.json"), "utf8"));
+  const raw = migrateBrand(JSON.parse(fs.readFileSync(path.join(dest, "brand.json"), "utf8"))).raw as Record<string, any>;
   raw.id = id;
   raw.name = name;
   raw.fictional = false;
@@ -117,10 +150,8 @@ export function scaffoldBrand(id: string, name: string, from = "demo"): BrandChe
 /** The parts of a brand the brief interpreter should read, as plain text. */
 export function brandBriefing(brandId: string): string {
   const b = loadBrand(brandId).brand;
-  const colours = Object.entries(b.colours)
-    .filter(([, v]) => v)
-    .map(([k, v]) => `${k}: ${v!.name ?? k} ${v!.value}`)
-    .join("; ");
+  // Names only, for reference: the engine chooses colour schemes, so the script writer never picks colours.
+  const colours = b.palette.colours.map((c) => `${c.name} ${c.value}`).join("; ");
   return [
     `Brand: ${b.name}${b.fictional ? " (fictional)" : ""}`,
     b.description ? `About: ${b.description}` : "",
@@ -128,7 +159,7 @@ export function brandBriefing(brandId: string): string {
     b.guidelines ? `Guidelines:\n${b.guidelines}` : "",
     b.rules.do.length ? `Do:\n${b.rules.do.map((d) => `- ${d}`).join("\n")}` : "",
     b.rules.dont.length ? `Do not:\n${b.rules.dont.map((d) => `- ${d}`).join("\n")}` : "",
-    `Colours (for reference only; the engine applies them): ${colours}`,
+    `Colours (for reference only; the engine applies them and chooses every colour scheme): ${colours}`,
     iconBriefing(brandId),
   ]
     .filter(Boolean)
@@ -161,6 +192,10 @@ export interface PreviewOptions {
   caption?: string;
   /** Also screenshot each still to PNG. Default true. */
   png?: boolean;
+  /** Draw every still in this scheme (an id, or an unsaved scheme). Default: the scheme a video would give each scene. */
+  scheme?: string | Scheme;
+  /** Live previews: scheme colours as variables on :root (see compileStill). */
+  live?: boolean;
 }
 
 /**
@@ -191,7 +226,7 @@ export async function previewBrand(input: string | { brand: unknown; dir: string
       // Drop the sample icon if this brand and the library do not have it, rather than failing the preview.
       if (slots.icon && !listIcons(loaded).some((i) => i.name === (slots.icon as { icon: string }).icon)) delete slots.icon;
       for (const f of formats) {
-        const page = compileStill({ type, slots, id: type }, loaded, f, { caption: opts.caption ?? "Captions look like this on screen" });
+        const page = compileStill({ type, slots, id: type }, loaded, f, { caption: opts.caption ?? "Captions look like this on screen", scheme: opts.scheme, live: opts.live });
         const file = writePage(page, opts.outDir, `${type}-${f}.html`);
         const fmt = getFormat(f);
         const item: PreviewItem = { scene: type, format: f, html: file, width: fmt.width, height: fmt.height, issues: page.issues.map((i) => i.message) };

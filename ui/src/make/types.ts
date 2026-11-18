@@ -7,6 +7,47 @@ export interface Meta {
   formats: Array<{ id: string; label: string; width: number; height: number }>;
   scenes: Array<{ type: string; label: string; text?: Array<{ slot: string; maxChars: number; maxCharsWhenFull?: number }>; sample?: Record<string, unknown>; required?: string[] }>;
   stages: Stage[];
+  lengths?: Array<{ id: string; label: string; min?: number; max?: number }>;
+  motion?: {
+    styles: Array<{ id: string; label: string; line?: string }>;
+    entrances: Array<{ id: string; label: string; roles?: string[] }>;
+    transitions: Array<{ id: string; label: string; seconds?: number; nextToMedia?: boolean }>;
+    textEffects: Array<{ id: string; label: string; scenes?: string[] | "any" }>;
+    shapes: Array<{ id: string; label: string }>;
+  };
+}
+export interface Look {
+  schemes?: "spread" | "single" | null;
+  scheme?: string | null;
+  motionStyle?: string | null;
+}
+export interface PlanScene {
+  index: number;
+  id: string;
+  type: string;
+  label: string;
+  beat?: string;
+  start: number;
+  duration: number;
+  scheme: string | null;
+  schemeAuto: boolean;
+  transitionIn: string;
+  transitionSeconds: number;
+  motion: { style?: string; entrance?: string; text?: string; shape?: string };
+  stills: Record<string, string | null>;
+  problems: string[];
+}
+export interface PlanScheme {
+  id: string;
+  name: string;
+  usable: boolean;
+  bookends?: boolean;
+  tone?: string;
+  vars: Record<string, string>;
+}
+export interface Plan {
+  scenes: PlanScene[];
+  schemes: PlanScheme[];
 }
 export interface BrandSummary {
   id: string;
@@ -35,6 +76,8 @@ export interface Job {
   error?: { stage: string | null; message: string; problems?: string[]; retryable?: boolean };
   notes: string[];
   fromApp: boolean;
+  mode?: "full" | "rerender" | "relook";
+  formats?: string[];
 }
 export interface JobRow {
   id: string;
@@ -61,6 +104,9 @@ export interface JobViewData {
   outputs: Output[];
   srt: string | null;
   sheet: string | null;
+  look?: Look | null;
+  plan?: Plan | null;
+  remake?: "look" | "words";
 }
 
 export const STATE_TEXT: Record<string, string> = { queued: "Waiting", running: "In progress", done: "Ready", error: "Problem", stopped: "Stopped" };

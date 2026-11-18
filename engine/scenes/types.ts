@@ -3,6 +3,7 @@ import type { z } from "zod";
 import type { FormatConfig, FormatId } from "../config";
 import type { LoadedBrand } from "../brand";
 import type { EntranceName } from "../motion";
+import type { ElementRole, EntranceId } from "../motion-rules";
 import type { Beat, IconRef, SurfaceId } from "../schema";
 import type { ClipRef, PhotoRef, ResolvedMedia } from "../media";
 
@@ -28,7 +29,12 @@ export interface TextSlot {
 export interface SceneElement {
   /** Element id suffix. The full DOM id is `${sceneId}-${id}`. */
   id: string;
+  /** What the element is. A motion style moves each role in its own way (engine/motion.ts). */
+  role: ElementRole;
+  /** The Calm (house) entrance preset. Calm reproduces exactly what the engine always did. */
   entrance: EntranceName;
+  /** Entrances this element may take, when fewer than its role allows (a panel over a photo only rises or fades). */
+  only?: readonly EntranceId[];
   /** Text slot this element shows, for the reading-time rule. */
   slot?: string;
   /**
@@ -51,8 +57,10 @@ export interface SceneContext<S> {
   rich(text: string, emphasis?: string[]): string;
   /** Inline SVG for an icon reference. Records a lint error when it cannot be found. */
   icon(ref: IconRef): string;
-  /** URL of a brand logo inside the build. */
-  logo(variant: "onLight" | "onDark"): string;
+  /** URL of a brand logo inside the build. Default: the logo for this scene's colour scheme. */
+  logo(variant?: "onLight" | "onDark"): string;
+  /** The colour scheme this scene is drawn in. */
+  schemeId: string;
   /** A photo from the brand's media folder, copied into the build. Null (and a lint error) when it cannot be used. */
   photo(ref: PhotoRef): ResolvedMedia | null;
   /** A video clip from the brand's media folder. Null (and a lint error) when it cannot be used. */
@@ -71,8 +79,18 @@ export interface SceneDefinition<S extends Record<string, unknown> = Record<stri
   description: string;
   /** Story beats this scene suits. */
   beats: Beat[];
-  /** Brand surface the scene sits on: dark, light or tint. */
-  surface: SurfaceId;
+  /**
+   * The version 1 surface this scene sat on (dark, light or tint). Brands migrated from version 1 keep using the
+   * scheme with this id for this scene type (schemeUse "by-type"), so their videos look as before.
+   */
+  legacyScheme: SurfaceId;
+  /**
+   * What the scene needs from a colour scheme: "bookends" (title and end card: a scheme that can open and close a
+   * video, with the logo), "prefer-pale" (stat and quote read best on a pale background), or "any".
+   */
+  schemeNeed: "bookends" | "prefer-pale" | "any";
+  /** True when the scene draws a circle or icon tile for these slots (shape colour and shape motion apply). */
+  hasShape?(slots: S): boolean;
   /** True when the scene shows a photo or video. Such scenes always crossfade (engine/transitions.ts). */
   media?: boolean;
   /**
